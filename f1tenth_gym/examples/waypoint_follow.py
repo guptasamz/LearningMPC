@@ -1,3 +1,4 @@
+import os
 import time
 from f110_gym.envs.base_classes import Integrator
 import yaml
@@ -245,9 +246,13 @@ def main():
 
     work = {'mass': 3.463388126201571, 'lf': 0.15597534362552312, 'tlad': 0.82461887897713965, 'vgain': 1.375}#0.90338203837889}
     
-    with open('config_example_map.yaml') as file:
+    # resolve config and data files relative to this script, not the cwd
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(base_dir, 'config_example_map.yaml')) as file:
         conf_dict = yaml.load(file, Loader=yaml.FullLoader)
     conf = Namespace(**conf_dict)
+    conf.map_path = os.path.join(base_dir, conf.map_path)
+    conf.wpt_path = os.path.join(base_dir, conf.wpt_path)
 
     planner = PurePursuitPlanner(conf, (0.17145+0.15875)) #FlippyPlanner(speed=0.2, flip_every=1, steer=10)
 
