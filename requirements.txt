@@ -1,0 +1,21 @@
+# Core scientific stack
+numpy>=1.24,<2.0
+scipy>=1.10
+pandas>=2.0
+matplotlib>=3.7
+pillow>=10.0
+scikit-image>=0.21
+
+# Config / map files
+pyyaml>=6.0
+
+# Optimization (LMPC uses OSQP; cvxpy for prototyping QPs)
+osqp>=0.6.3
+cvxpy>=1.4
+
+# Splines / geometry helpers
+shapely>=2.0
+
+# Notebooks
+jupyter>=1.0
+ipykernel>=6.25
