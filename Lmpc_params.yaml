@@ -12,11 +12,11 @@ Ts: 0.05
 K_NEAR: 16
 SPEED_MAX: 10.00
 STEER_MAX: 0.41
-ACCELERATION_MAX: 4.0
-DECELERATION_MAX: 5.0
+ACCELERATION_MAX: 9.51
+DECELERATION_MAX: 9.51
 VEL_THRESHOLD: 0.8
 
-MAP_MARGIN: 0.32
+MAP_MARGIN: 0.45  # was 0.32; raised for f1tenth_gym runs after outer-wall crash ~lap 27 (see src_gym/results)
 
 WAYPOINT_SPACE: 0.2
 

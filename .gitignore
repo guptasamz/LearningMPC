@@ -3,3 +3,7 @@
 __pycache__/
 *.egg-info/
 *.pyc
+src_gym/build/
+src_gym/deps/
+src_gym/*.so
+src_gym/results/
