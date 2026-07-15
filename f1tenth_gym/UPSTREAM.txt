@@ -1,0 +1,3 @@
+Vendored from https://github.com/f1tenth/f1tenth_gym
+commit 4fdb9c7e6fb7c701290f4dc18377d07c1681724f (2025-06-09)
+Inner .git removed so this code commits with the parent LearningMPC repo.

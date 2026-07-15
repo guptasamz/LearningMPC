@@ -19,3 +19,13 @@ shapely>=2.0
 # Notebooks
 jupyter>=1.0
 ipykernel>=6.25
+
+# f1tenth_gym simulator (vendored in ./f1tenth_gym, see its UPSTREAM.txt)
+# NOTE: gym 0.19.0 has legacy metadata — install requires pip<24.1:
+#   pip install "pip==24.0" "setuptools==65.5.0" "wheel==0.38.4"
+#   pip install "gym==0.19.0" --no-build-isolation
+#   pip install -e ./f1tenth_gym --no-deps
+gym==0.19.0
+numba>=0.55.2
+pyglet>=1.5.11,<2.0   # 1.4.x cannot load OpenGL.framework on macOS Big Sur+
+pyopengl>=3.1
