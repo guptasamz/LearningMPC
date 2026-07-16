@@ -36,7 +36,6 @@ PARAMS_YAML = os.path.join(REPO, "Lmpc_params.yaml")
 CONTROL_DT = 0.05
 PHYSICS_DT = 0.01
 STEPS = int(round(CONTROL_DT / PHYSICS_DT))
-V_TARGET = 1.5          # path-follower cruise speed [m/s]
 LOOKAHEAD = 0.9         # pure pursuit lookahead [m]
 KP_SPEED = 2.0          # speed P gain -> accel command
 
@@ -77,26 +76,54 @@ def gym_car_params(p):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--map", required=True, help="folder name under data/maps")
+    ap.add_argument("--map", required=True,
+                    help="folder name under data/maps, or 'levinelobby_track' "
+                         "for the repo's original map")
     ap.add_argument("--laps", type=int, default=2)
+    ap.add_argument("--mu", type=float, default=None,
+                    help="plant friction while recording (match the experiment)")
+    ap.add_argument("--v-target", type=float, default=1.5,
+                    help="path-follower cruise speed [m/s]; lower it for low mu")
+    ap.add_argument("--out-ss", default=None,
+                    help="output csv path override (default: map folder)")
     args = ap.parse_args()
+    V_TARGET = args.v_target
 
     with open(PARAMS_YAML) as f:
         p = {k: float(v) for k, v in yaml.safe_load(f).items()
              if isinstance(v, (int, float))}
+    if args.mu is not None:
+        p["friction_coeff"] = args.mu
+        print(f"recording at plant mu = {args.mu}, v_target = {V_TARGET}")
     m = args.map
-    map_stem = os.path.join(MAPS_DIR, m, f"{m}_map")
 
-    center = load_centerline(m)
+    if m == "levinelobby_track":
+        map_stem = os.path.join(REPO, "data", "levinelobby_track")
+        center_path = os.path.join(REPO, "data", "centerline_waypoints.csv")
+        pts = []
+        with open(center_path) as f:
+            for row in csv.reader(f):
+                if row and not row[0].strip().startswith("#"):
+                    pts.append([float(row[0]), float(row[1])])
+        import numpy as _np
+        center = _np.array(pts)
+        write_wp = False       # LMPC already uses centerline_waypoints.csv directly
+    else:
+        map_stem = os.path.join(MAPS_DIR, m, f"{m}_map")
+        center = load_centerline(m)
+        write_wp = True
     dense, length = densify(center)
     print(f"{m}: {len(center)} centerline pts, track length {length:.1f} m")
 
     # plain x,y waypoints for the LMPC Track constructor (no header)
-    wp_out = os.path.join(MAPS_DIR, m, f"{m}_waypoints.csv")
-    with open(wp_out, "w", newline="") as f:
-        w = csv.writer(f)
-        for x, y in center:
-            w.writerow([f"{x:.6f}", f"{y:.6f}"])
+    if write_wp:
+        wp_out = os.path.join(MAPS_DIR, m, f"{m}_waypoints.csv")
+        with open(wp_out, "w", newline="") as f:
+            w = csv.writer(f)
+            for x, y in center:
+                w.writerow([f"{x:.6f}", f"{y:.6f}"])
+    else:
+        wp_out = "(existing centerline_waypoints.csv, unchanged)"
 
     # start pose: first centerline point, heading along the track
     d0 = dense[1] - dense[0]
@@ -111,7 +138,7 @@ def main():
         i = np.argmin((dense[:, 0] - x) ** 2 + (dense[:, 1] - y) ** 2)
         return i * 0.05
 
-    ss_out = os.path.join(MAPS_DIR, m, f"{m}_initial_safe_set.csv")
+    ss_out = args.out_ss or os.path.join(MAPS_DIR, m, f"{m}_initial_safe_set.csv")
     fout = open(ss_out, "w", newline="")
     writer = csv.writer(fout)
 

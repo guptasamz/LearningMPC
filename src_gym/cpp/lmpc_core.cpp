@@ -57,10 +57,16 @@ struct Sample{
     int cost;
 };
 
-// verbatim from LMPC.cpp
+// from LMPC.cpp; loop form replaced by fmod (GUARD deviation): identical
+// result for finite inputs, but terminates when fed inf/NaN — the original
+// while-loops spin forever on garbage (observed: post-spin states on Sepang,
+// and R=0.1 runs where a non-finite QP solution reaches this function).
 void wrap_angle(double& angle, const double angle_ref){
-    while(angle - angle_ref > M_PI) {angle -= 2*M_PI;}
-    while(angle - angle_ref < -M_PI) {angle += 2*M_PI;}
+    if (!std::isfinite(angle) || !std::isfinite(angle_ref)) return;
+    double d = angle - angle_ref;
+    d = fmod(d + M_PI, 2*M_PI);
+    if (d < 0) d += 2*M_PI;
+    angle = angle_ref + d - M_PI;
 }
 
 class LMPCCore{
@@ -269,11 +275,15 @@ private:
         q_s_terminal = p.at("q_s_terminal");
         R.setZero();
         R.diagonal() << r_accel, r_steer;
-        // optional control-rate weights (0 / absent = term disabled)
+        // optional control-rate weights (0 / absent = term disabled).
+        // RATE units: the cost is R_d * ||(u_k - u_{k-1})/Ts||^2, matching what
+        // Racing-LMPC-ROS2 actually solves (dU variable with u_i = u_{i-1} +
+        // du*dt), so yaml values are directly comparable to that paper's
+        // c_du figures. The 1/Ts^2 factor is folded in here.
         double rd_a = p.count("r_d_accel") ? p.at("r_d_accel") : 0.0;
         double rd_s = p.count("r_d_steer") ? p.at("r_d_steer") : 0.0;
         R_d.setZero();
-        R_d.diagonal() << rd_a, rd_s;
+        R_d.diagonal() << rd_a / (Ts * Ts), rd_s / (Ts * Ts);
         rate_cost_on_ = (rd_a > 0.0) || (rd_s > 0.0);
         u_prev_applied_.setZero();
         MAP_MARGIN = p.at("MAP_MARGIN");
@@ -888,8 +898,19 @@ private:
             last_solve_ok_ = false;
             return;
         }
+        // GUARD deviation: a solution containing inf/NaN is treated exactly
+        // like a failed solve (previous QPSolution_ kept, original failure
+        // path) instead of being consumed and poisoning the next
+        // linearization. Finite solutions are untouched.
+        VectorXd sol = solver.getSolution();
+        if (!sol.allFinite()) {
+            cout << "[LMPC DEBUG] non-finite QP solution discarded" << endl;
+            last_solve_ok_ = false;
+            solver.clearSolver();
+            return;
+        }
         last_solve_ok_ = true;
-        QPSolution_ = solver.getSolution();
+        QPSolution_ = sol;
 
         solver.clearSolver();
     }

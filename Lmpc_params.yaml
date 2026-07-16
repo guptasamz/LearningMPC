@@ -4,9 +4,10 @@ wp_file_name: "/home/yuwei/yuwei_ws/src/LearningMPC/data/centerline_waypoints.cs
 
 r_accel : 1.5
 r_steer: 18.0
-# control-rate cost c_du*||u_k - u_{k-1}||^2 (Xue et al. 2309.10716); only read
-# by the src_gym port (lmpc_core), ignored by the original ROS node. 0 = off.
-# Paper's c_du range is 1.0-0.01; their BARC config uses R_d = 0.1*I.
+# control-rate cost, RATE units: R_d*||(u_k - u_{k-1})/Ts||^2 (the 1/Ts^2 is
+# folded in by lmpc_core). Values are directly comparable to the c_du figures
+# of Xue et al. 2309.10716 (their BARC config: 0.1). Only read by the src_gym
+# port, ignored by the original ROS node. 0 = off.
 r_d_accel: 0.1
 r_d_steer: 0.1
 # OSQP iteration cap (src_gym port only). Default 4000 is too low for the

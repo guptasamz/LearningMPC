@@ -85,14 +85,28 @@ What is NOT identical:
    simulator requires a single-channel image.
 
 10. **Control-rate cost (intentional formulation extension).** A stage cost
-    $\sum_k \|u_k - u_{k-1}\|^2_{R_d}$ with $u_{-1}$ = last applied input was
-    added to match the LMPC stage cost of Xue et al., arXiv:2309.10716
-    (Racing-LMPC-ROS2). Weights come from `r_d_accel` / `r_d_steer` in
-    `Lmpc_params.yaml`; setting both to 0 (or removing the keys) recovers the
-    original formulation exactly. Implemented as a tridiagonal block in the
-    QP Hessian plus a linear term on $u_0$ — no new variables. Only
-    `src_gym/cpp/lmpc_core.cpp` carries this; the original `src/LMPC.cpp`
-    is untouched.
+    $\sum_k \|(u_k - u_{k-1})/T_s\|^2_{R_d}$ with $u_{-1}$ = last applied
+    input, matching Xue et al., arXiv:2309.10716. Note the units: the paper
+    WRITES $c_{\Delta u}\|u_t - u_{t-1}\|^2$, but its code (Racing-LMPC-ROS2)
+    penalizes the RATE $\|\Delta u / \Delta t\|^2$ via the constrained dU
+    variable — a factor $1/T_s^2 = 400$ at 20 Hz. This port uses the code's
+    (rate) semantics so `r_d_accel` / `r_d_steer` values are directly
+    comparable to that paper's reported $c_{\Delta u}$; verified empirically
+    (their 0.1 vs 1.0 convergence gap reproduces). Setting both to 0 (or
+    removing the keys) recovers the original formulation exactly.
+    Implemented as a tridiagonal block in the QP Hessian plus a linear term
+    on $u_0$ — no new variables. Only `src_gym/cpp/lmpc_core.cpp` carries
+    this; the original `src/LMPC.cpp` is untouched.
+
+11. **Two robustness guards (deviations, behavior-preserving for valid
+    solves).** (a) `wrap_angle` uses fmod instead of the original unbounded
+    while-loops — identical result for finite inputs, but terminates on
+    inf/NaN (the originals spin forever, observed as a hard hang). (b) A QP
+    solution containing non-finite values is discarded and treated as a
+    failed solve (the original failure path: previous solution kept),
+    instead of poisoning the next linearization. Both triggered in practice
+    by post-spin garbage states and by very low input-effort weights
+    (R = 0.1) — the original code hangs in those regimes.
 
 Not changed anywhere: `f1tenth_gym` internals beyond the user's own
 `base_classes.py` accel-passthrough edit, and the repo's original `src/`,

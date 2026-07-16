@@ -140,6 +140,18 @@ def main():
     ap.add_argument("--map-margin", type=float, default=None,
                     help="override MAP_MARGIN (occupancy inflation) for this run; "
                          "needed on narrow tracks where the default would seal the corridor")
+    ap.add_argument("--mu", type=float, default=None,
+                    help="override friction for BOTH the gym plant and the LMPC "
+                         "dynamics model (sets friction_coeff; plant mu derives from it)")
+    ap.add_argument("--ss-file", default=None,
+                    help="override the initial safe set csv (e.g. one recorded "
+                         "at the experiment's mu)")
+    ap.add_argument("--qs", type=float, default=None,
+                    help="override q_s (track-slack weight) for this run")
+    ap.add_argument("--r-accel", type=float, default=None,
+                    help="override r_accel (input effort weight on acceleration)")
+    ap.add_argument("--r-steer", type=float, default=None,
+                    help="override r_steer (input effort weight on steering)")
     args = ap.parse_args()
 
     global MAP_STEM, WAYPOINT_CSV, INIT_SS_CSV
@@ -148,6 +160,9 @@ def main():
         MAP_STEM = os.path.join(d, f"{args.map}_map")
         WAYPOINT_CSV = os.path.join(d, f"{args.map}_waypoints.csv")
         INIT_SS_CSV = os.path.join(d, f"{args.map}_initial_safe_set.csv")
+    if args.ss_file:
+        INIT_SS_CSV = args.ss_file
+        print(f"initial safe set override: {args.ss_file}")
 
     params = numeric_params(PARAMS_YAML)
     if args.rd is not None:
@@ -160,6 +175,18 @@ def main():
     if args.map_margin is not None:
         params["MAP_MARGIN"] = args.map_margin
         print(f"MAP_MARGIN override: {args.map_margin} m")
+    if args.mu is not None:
+        params["friction_coeff"] = args.mu   # controller model AND plant (see below)
+        print(f"friction override: mu = {args.mu} (controller model + gym plant)")
+    if args.qs is not None:
+        params["q_s"] = args.qs
+        print(f"q_s override: {args.qs}")
+    if args.r_accel is not None:
+        params["r_accel"] = args.r_accel
+        print(f"r_accel override: {args.r_accel}")
+    if args.r_steer is not None:
+        params["r_steer"] = args.r_steer
+        print(f"r_steer override: {args.r_steer}")
     grid, w, h, res, ox, oy = load_occupancy_grid(MAP_STEM)
     sx, sy, syaw = first_safe_set_pose(INIT_SS_CSV)
 
@@ -172,7 +199,7 @@ def main():
 
     env = gym.make("f110_gym:f110-v0", map=MAP_STEM, map_ext=".png",
                    num_agents=1, timestep=PHYSICS_DT, integrator=Integrator.RK4,
-                   params=gym_car_params(params))
+                   params=gym_car_params(params))  # plant mu = params['friction_coeff']
 
     if args.render:
         def render_callback(e):
