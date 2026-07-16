@@ -84,6 +84,16 @@ What is NOT identical:
    (`data/levinelobby_track.png`) — pixel values byte-identical; gym's laser
    simulator requires a single-channel image.
 
+10. **Control-rate cost (intentional formulation extension).** A stage cost
+    $\sum_k \|u_k - u_{k-1}\|^2_{R_d}$ with $u_{-1}$ = last applied input was
+    added to match the LMPC stage cost of Xue et al., arXiv:2309.10716
+    (Racing-LMPC-ROS2). Weights come from `r_d_accel` / `r_d_steer` in
+    `Lmpc_params.yaml`; setting both to 0 (or removing the keys) recovers the
+    original formulation exactly. Implemented as a tridiagonal block in the
+    QP Hessian plus a linear term on $u_0$ — no new variables. Only
+    `src_gym/cpp/lmpc_core.cpp` carries this; the original `src/LMPC.cpp`
+    is untouched.
+
 Not changed anywhere: `f1tenth_gym` internals beyond the user's own
 `base_classes.py` accel-passthrough edit, and the repo's original `src/`,
 `include/`, `data/` contents.

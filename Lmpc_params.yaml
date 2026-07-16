@@ -4,6 +4,16 @@ wp_file_name: "/home/yuwei/yuwei_ws/src/LearningMPC/data/centerline_waypoints.cs
 
 r_accel : 1.5
 r_steer: 18.0
+# control-rate cost c_du*||u_k - u_{k-1}||^2 (Xue et al. 2309.10716); only read
+# by the src_gym port (lmpc_core), ignored by the original ROS node. 0 = off.
+# Paper's c_du range is 1.0-0.01; their BARC config uses R_d = 0.1*I.
+r_d_accel: 0.1
+r_d_steer: 0.1
+# OSQP iteration cap (src_gym port only). Default 4000 is too low for the
+# large F1 maps (~500 m tracks, coords to +-75 m): QPs converge but slowly,
+# and the aborted solves were reported as failures. Replay-verified: 20000
+# takes YasMarina from 102 failures to 0.
+osqp_max_iter: 20000
 q_s: 3000.0
 q_s_terminal: 800
 
@@ -30,3 +40,17 @@ C_S_rear: 2.3 #.79 # 1/rad ? (estimated weight/4)
 mass: 3.17 # kg (measured on car 'lidart')
 moment_inertia: .0398378 # kg m^2 (estimated as a rectangle with width and height of car and evenly distributed mass, then shifted to account for center of mass location)
 random: 1.0
+
+
+  # params_dict = {'mu': 1.0489,
+  #                  'C_Sf': 4.718,
+  #                  'C_Sr': 5.4562,
+  #                  'h': 0.074,
+  #                  'm': 3.74,
+  #                  'I': 0.04712,
+  #                  'v_switch':7.319,
+  #                  'a_max': 9.51,
+  #                  'v_min':-5.0,
+  #                  'v_max': 20.0,
+  #                  'width': 0.31,
+  #                  'length': 0.58}

@@ -7,3 +7,4 @@ src_gym/build/
 src_gym/deps/
 src_gym/*.so
 src_gym/results/
+src_gym/results_*

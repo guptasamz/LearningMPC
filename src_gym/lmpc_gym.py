@@ -129,9 +129,37 @@ def main():
     ap.add_argument("--laps", type=int, default=30, help="number of LMPC laps to run")
     ap.add_argument("--max-sim-time", type=float, default=900.0)
     ap.add_argument("--out", default=os.path.join(HERE, "results"))
+    ap.add_argument("--rd", type=float, default=None,
+                    help="override control-rate weight: sets r_d_accel = r_d_steer = RD")
+    ap.add_argument("--map", default=None,
+                    help="map folder under data/maps (expects <map>_map.png/.yaml, "
+                         "<map>_waypoints.csv, <map>_initial_safe_set.csv from "
+                         "record_initial_ss.py). Default: levinelobby_track.")
+    ap.add_argument("--speed-max", type=float, default=None,
+                    help="override SPEED_MAX (QP velocity upper bound) for this run")
+    ap.add_argument("--map-margin", type=float, default=None,
+                    help="override MAP_MARGIN (occupancy inflation) for this run; "
+                         "needed on narrow tracks where the default would seal the corridor")
     args = ap.parse_args()
 
+    global MAP_STEM, WAYPOINT_CSV, INIT_SS_CSV
+    if args.map:
+        d = os.path.join(REPO, "data", "maps", args.map)
+        MAP_STEM = os.path.join(d, f"{args.map}_map")
+        WAYPOINT_CSV = os.path.join(d, f"{args.map}_waypoints.csv")
+        INIT_SS_CSV = os.path.join(d, f"{args.map}_initial_safe_set.csv")
+
     params = numeric_params(PARAMS_YAML)
+    if args.rd is not None:
+        params["r_d_accel"] = args.rd
+        params["r_d_steer"] = args.rd
+        print(f"control-rate cost override: r_d = {args.rd}")
+    if args.speed_max is not None:
+        params["SPEED_MAX"] = args.speed_max
+        print(f"SPEED_MAX override: {args.speed_max} m/s")
+    if args.map_margin is not None:
+        params["MAP_MARGIN"] = args.map_margin
+        print(f"MAP_MARGIN override: {args.map_margin} m")
     grid, w, h, res, ox, oy = load_occupancy_grid(MAP_STEM)
     sx, sy, syaw = first_safe_set_pose(INIT_SS_CSV)
 
@@ -244,6 +272,14 @@ def main():
     step_log.close()
     lap_log.close()
     write_lap_plot(lap_indices, lap_times, plot_png, crashed=crashed)
+    if args.map:
+        try:
+            from plot_lap_trajectories import make_plot
+            traj_png = make_plot(args.map, args.out)
+            if traj_png:
+                print(f"lap trajectory plot: {traj_png}")
+        except Exception as e:  # plotting must never kill a finished run
+            print(f"trajectory plot skipped: {e}")
     print(f"\n==== summary ====")
     print(f"laps completed: {len(lap_times)}  crashed: {crashed}  "
           f"solver failures: {solve_fails}")

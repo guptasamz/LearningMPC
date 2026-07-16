@@ -26,6 +26,7 @@
 #include <vector>
 #include <iostream>
 #include <string>
+#include <cmath>
 #include <map>
 #include <algorithm>
 
@@ -163,6 +164,7 @@ public:
         float steer = QPSolution_((N+1)*nx+1);
         steer = min(steer, 0.41f);
         steer = max(steer, -0.41f);
+        u_prev_applied_ << accel, steer;   // u_{-1} anchor for the rate cost
 
         add_point();
         /*** store info and advance to next time step***/
@@ -208,6 +210,19 @@ private:
     double r_accel;
     double r_steer;
     Matrix<double, nu, nu> R;
+    // control-rate cost c_du*||u_k - u_{k-1}||^2 (Xue et al., arXiv:2309.10716,
+    // eq. of the LMPC stage cost). NOT in the original LMPC.cpp; enabled only
+    // when r_d_* params are present and nonzero. u_{-1} anchors to the last
+    // APPLIED input, as in their u_ic constraint.
+    Matrix<double, nu, nu> R_d;
+    Matrix<double, nu, 1> u_prev_applied_;
+    bool rate_cost_on_;
+    // optional OSQP numerical settings (0 / -1 = library default)
+    int osqp_max_iter_;
+    int osqp_scaling_;
+    double osqp_eps_prim_inf_;
+    double osqp_eps_abs_;
+    double osqp_eps_rel_;
 
     Track* track_;
     //odometry
@@ -254,7 +269,20 @@ private:
         q_s_terminal = p.at("q_s_terminal");
         R.setZero();
         R.diagonal() << r_accel, r_steer;
+        // optional control-rate weights (0 / absent = term disabled)
+        double rd_a = p.count("r_d_accel") ? p.at("r_d_accel") : 0.0;
+        double rd_s = p.count("r_d_steer") ? p.at("r_d_steer") : 0.0;
+        R_d.setZero();
+        R_d.diagonal() << rd_a, rd_s;
+        rate_cost_on_ = (rd_a > 0.0) || (rd_s > 0.0);
+        u_prev_applied_.setZero();
         MAP_MARGIN = p.at("MAP_MARGIN");
+        // optional OSQP numerical knobs; absent = library defaults (original behavior)
+        osqp_max_iter_ = p.count("osqp_max_iter") ? (int)p.at("osqp_max_iter") : 0;
+        osqp_scaling_ = p.count("osqp_scaling") ? (int)p.at("osqp_scaling") : -1;
+        osqp_eps_prim_inf_ = p.count("osqp_eps_prim_inf") ? p.at("osqp_eps_prim_inf") : 0.0;
+        osqp_eps_abs_ = p.count("osqp_eps_abs") ? p.at("osqp_eps_abs") : 0.0;
+        osqp_eps_rel_ = p.count("osqp_eps_rel") ? p.at("osqp_eps_rel") : 0.0;
 
         car.wheelbase = p.at("wheelbase");
         car.friction_coeff = p.at("friction_coeff");
@@ -606,7 +634,27 @@ private:
             }
             if (i<N){
                 for (int row=0; row<nu; row++){
-                    HessianMatrix.insert((N+1)*nx + i*nu + row, (N+1)*nx + i*nu + row) = R(row, row);
+                    // diagonal: input-effort weight R plus, when the control-rate
+                    // cost is enabled, the tridiagonal contribution of
+                    // 0.5*R_d*sum_k ||u_k - u_{k-1}||^2 with u_{-1} = last applied
+                    // input (2*R_d for interior stages, R_d for the last stage)
+                    double rate_diag = rate_cost_on_ ? ((i < N-1) ? 2.0 : 1.0) * R_d(row, row) : 0.0;
+                    HessianMatrix.insert((N+1)*nx + i*nu + row, (N+1)*nx + i*nu + row) = R(row, row) + rate_diag;
+                }
+                if (rate_cost_on_){
+                    if (i == 0){
+                        // linear term from (u_0 - u_applied)^2
+                        for (int row=0; row<nu; row++){
+                            gradient((N+1)*nx + row) += -R_d(row, row) * u_prev_applied_(row);
+                        }
+                    }
+                    else {
+                        // symmetric off-diagonal coupling u_i <-> u_{i-1}
+                        for (int row=0; row<nu; row++){
+                            HessianMatrix.insert((N+1)*nx + i*nu + row, (N+1)*nx + (i-1)*nu + row) = -R_d(row, row);
+                            HessianMatrix.insert((N+1)*nx + (i-1)*nu + row, (N+1)*nx + i*nu + row) = -R_d(row, row);
+                        }
+                    }
                 }
             }
 
@@ -772,6 +820,12 @@ private:
         OsqpEigen::Solver solver;
         solver.settings()->setWarmStart(true);
         solver.settings()->setVerbosity(false);   // added: original used the default (verbose); output-only change
+        // optional numerical knobs (absent from yaml = OSQP defaults = original behavior)
+        if (osqp_max_iter_ > 0) solver.settings()->setMaxIteration(osqp_max_iter_);
+        if (osqp_scaling_ >= 0) solver.settings()->setScaling(osqp_scaling_);
+        if (osqp_eps_prim_inf_ > 0) solver.settings()->setPrimalInfeasibilityTolerance(osqp_eps_prim_inf_);
+        if (osqp_eps_abs_ > 0) solver.settings()->setAbsoluteTolerance(osqp_eps_abs_);
+        if (osqp_eps_rel_ > 0) solver.settings()->setRelativeTolerance(osqp_eps_rel_);
         solver.data()->setNumberOfVariables((N+1)*nx+ N*nu + (N+1)+ 2*K_NEAR +nx);
         solver.data()->setNumberOfConstraints((N+1)*nx+ 2*(N+1) + N*nu + (N+1) + (N+1) + 2*K_NEAR + 2*nx+1);
 
@@ -781,9 +835,56 @@ private:
         if (!solver.data()->setLowerBound(lower)){throw "fail to set lower bound";}
         if (!solver.data()->setUpperBound(upper)){throw "fail to set upper bound";}
 
-        if(!solver.initSolver()){ cout<< "fail to initialize solver"<<endl;}
+        bool init_ok = solver.initSolver();
+        if (!init_ok){ cout<< "fail to initialize solver"<<endl;}
 
-        if(!solver.solve()) {
+        if(!init_ok || !solver.solve()) {
+            // ---- debug dump (diagnostics only; controller behavior unchanged:
+            // on failure the previous QPSolution_ keeps being used, as in the
+            // original code) ----
+            auto finite_count = [](const VectorXd& v){
+                int bad = 0;
+                for (int i=0; i<v.size(); i++) if (!std::isfinite(v(i))) bad++;
+                return bad;
+            };
+            cout << "[LMPC DEBUG] QP failure (init_ok=" << init_ok << ")"
+                 << " nonfinite: grad=" << finite_count(gradient)
+                 << " lower=" << finite_count(VectorXd(lower.array().min(1e30).max(-1e30) - lower.array()*0))
+                 << endl;
+            int bad_lo = 0, bad_hi = 0;
+            for (int i=0; i<lower.size(); i++){
+                if (std::isnan(lower(i))) bad_lo++;
+                if (std::isnan(upper(i))) bad_hi++;
+            }
+            int bad_H = 0;
+            for (int k=0; k<HessianMatrix.outerSize(); ++k)
+                for (SparseMatrix<double>::InnerIterator it(HessianMatrix,k); it; ++it)
+                    if (!std::isfinite(it.value())) bad_H++;
+            int bad_A = 0;
+            for (int k=0; k<constraintMatrix.outerSize(); ++k)
+                for (SparseMatrix<double>::InnerIterator it(constraintMatrix,k); it; ++it)
+                    if (!std::isfinite(it.value())) bad_A++;
+            cout << "[LMPC DEBUG] NaN lower=" << bad_lo << " NaN upper=" << bad_hi
+                 << " nonfinite H=" << bad_H << " nonfinite A=" << bad_A << endl;
+            cout << "[LMPC DEBUG] x0 = " << x0.transpose() << " use_dyn=" << use_dyn_ << endl;
+            for (int i=0; i<N+1; i++){
+                Matrix<double,nx,1> xr = QPSolution_.segment<nx>(i*nx);
+                double s_ref = track_->findTheta(xr(0), xr(1), 0, true);
+                double lw = track_->getLeftHalfWidth(s_ref);
+                double rw = track_->getRightHalfWidth(s_ref);
+                double dxd = track_->x_eval_d(s_ref);
+                double dyd = track_->y_eval_d(s_ref);
+                bool row_bad = !std::isfinite(lower((N+1)*nx + 2*i)) || !std::isfinite(upper((N+1)*nx + 2*i+1))
+                               || std::isnan(lower((N+1)*nx + 2*i)) || std::isnan(upper((N+1)*nx + 2*i+1));
+                if (i < 3 || row_bad || lw > 5.0 || rw > 5.0 || !std::isfinite(dxd) || !std::isfinite(dyd)){
+                    cout << "[LMPC DEBUG] k=" << i
+                         << " xref=(" << xr(0) << "," << xr(1) << ") v=" << xr(3)
+                         << " s_ref=" << s_ref << " lw=" << lw << " rw=" << rw
+                         << " dx'=" << dxd << " dy'=" << dyd
+                         << " boundlo=" << lower((N+1)*nx + 2*i)
+                         << " boundhi=" << upper((N+1)*nx + 2*i+1) << endl;
+                }
+            }
             last_solve_ok_ = false;
             return;
         }
