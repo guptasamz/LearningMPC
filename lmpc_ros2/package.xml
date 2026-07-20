@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>lmpc_ros2</name>
+  <version>0.1.0</version>
+  <description>
+    ROS2 (rclcpp) node for LearningMPC's src_gym/online_training controller
+    core (LMPCCore). Wraps the same C++ class used by src_gym/lmpc_gym.py --
+    no Python in the runtime control loop. See README.md.
+  </description>
+  <maintainer email="you@example.com">LearningMPC</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>nav_msgs</depend>
+  <depend>ackermann_msgs</depend>
+  <depend>ament_index_cpp</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

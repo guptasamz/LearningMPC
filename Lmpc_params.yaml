@@ -15,6 +15,18 @@ r_d_steer: 0.1
 # and the aborted solves were reported as failures. Replay-verified: 20000
 # takes YasMarina from 102 failures to 0.
 osqp_max_iter: 20000
+# Wall-clock backstop (seconds), independent of osqp_max_iter above -- for
+# the ROS2 real-time control loop (Ts=0.05s target). A genuinely infeasible
+# QP can run all osqp_max_iter iterations before reporting failure -- on
+# barc_oval this measured ~200ms worst case with only osqp_max_iter set,
+# versus ~4ms typical. 0.03 bounds that worst case to ~31ms (still under
+# Ts) while adding only 1 extra solver fallback out of ~1800 steps in the
+# same measurement. OSQP races time_limit against osqp_max_iter (whichever
+# hits first); a time-limited solve reports OSQP_TIME_LIMIT_REACHED, which
+# OsqpEigen::Solver::solve() already treats as failure like a maxed-out
+# iteration count, so the existing "keep previous solution" fallback covers
+# it unchanged. 0 = disabled (library default).
+osqp_time_limit: 0.03
 q_s: 3000.0
 q_s_terminal: 800
 

@@ -38,11 +38,13 @@
 #include <error_regression.hpp>   // online_training/cpp: nominal+residual model
 #include <memory>
 
+#ifdef LMPC_BUILD_PYBIND
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 
 namespace py = pybind11;
+#endif
 
 const int nx = 6;
 const int nu = 2;
@@ -74,7 +76,7 @@ void wrap_angle(double& angle, const double angle_ref){
 class LMPCCore{
 public:
     LMPCCore(const std::map<std::string,double>& params,
-             py::array_t<int8_t> grid_data,
+             const std::vector<int8_t>& grid_data,
              uint32_t width, uint32_t height,
              double resolution, double origin_x, double origin_y,
              const std::string& waypoint_file,
@@ -108,9 +110,7 @@ public:
         map_.info.height = height;
         map_.info.origin.position.x = origin_x;
         map_.info.origin.position.y = origin_y;
-        auto buf = grid_data.request();
-        const int8_t* ptr = static_cast<const int8_t*>(buf.ptr);
-        map_.data.assign(ptr, ptr + (size_t)width*height);
+        map_.data.assign(grid_data.begin(), grid_data.begin() + (size_t)width*height);
         occupancy_grid::inflate_map(map_, MAP_MARGIN);
 
         track_ = new Track(waypoint_file, map_, true);
@@ -191,7 +191,12 @@ public:
     /* body of run(), verbatim; applyControl() replaced by returning (accel,
      * steer) with the same hardcoded steer clamp the original applies before
      * publishing */
-    py::tuple step(){
+    // Plain C++ so this class has no pybind11 dependency outside the
+    // PYBIND11_MODULE block (see LMPC_BUILD_PYBIND) -- ROS2 callers use this
+    // directly; the python bindings adapt it to a py::tuple at the boundary.
+    struct StepResult { double accel; double steer; bool solved; };
+
+    StepResult step(){
         if (first_run_){
             // initialize QPSolution_ from initial Sample Safe Set (using the 2nd iteration)
             reset_QPSolution(1);
@@ -231,7 +236,7 @@ public:
         time_++;
         first_run_ = false;
 
-        return py::make_tuple(accel, steer, last_solve_ok_);
+        return StepResult{accel, steer, last_solve_ok_};
     }
 
     // diagnostics for the python runner (no effect on control flow)
@@ -241,12 +246,14 @@ public:
     long reg_samples() const { return reg_ ? (long)reg_->n_samples() : 0; }
     double track_length() const { return track_->length; }
     double vel() const { return vel_; }
-    py::array_t<double> predicted_states(){
-        py::array_t<double> out({N+1, (int)nx});
-        auto r = out.mutable_unchecked<2>();
+    // Row i = predicted state at horizon stage i (nx entries each). Plain
+    // nested vector for the same pybind11-decoupling reason as StepResult;
+    // the python bindings reshape this into a numpy array at the boundary.
+    std::vector<std::vector<double>> predicted_states(){
+        std::vector<std::vector<double>> out(N+1, std::vector<double>(nx));
         for (int i=0; i<N+1; i++)
             for (int j=0; j<nx; j++)
-                r(i,j) = QPSolution_(i*nx+j);
+                out[i][j] = QPSolution_(i*nx+j);
         return out;
     }
 
@@ -282,6 +289,17 @@ private:
     double osqp_eps_prim_inf_;
     double osqp_eps_abs_;
     double osqp_eps_rel_;
+    // NOT verbatim: wall-clock backstop, independent of osqp_max_iter_ (which
+    // stays large -- YasMarina-scale tracks need it, see osqp_max_iter's own
+    // comment in Lmpc_params.yaml). A genuinely infeasible QP can otherwise
+    // run all osqp_max_iter_ iterations before reporting failure -- measured
+    // ~200ms on barc_oval with the default 20000 cap, versus ~4ms typical.
+    // OSQP's time_limit races max_iter (whichever hits first); status becomes
+    // OSQP_TIME_LIMIT_REACHED, which OsqpEigen::Solver::solve() already
+    // treats as failure exactly like a maxed-out iteration count (its
+    // getStatus() != Status::Solved check), so the existing "keep previous
+    // solution" fallback applies unchanged. 0 = library default (disabled).
+    double osqp_time_limit_;
 
     // dynamics model switch (Xue et al., arXiv:2309.10716):
     //   0 = original ("known" kinematic/single-track pair, ZOH linearization)
@@ -398,6 +416,7 @@ private:
         osqp_eps_prim_inf_ = p.count("osqp_eps_prim_inf") ? p.at("osqp_eps_prim_inf") : 0.0;
         osqp_eps_abs_ = p.count("osqp_eps_abs") ? p.at("osqp_eps_abs") : 0.0;
         osqp_eps_rel_ = p.count("osqp_eps_rel") ? p.at("osqp_eps_rel") : 0.0;
+        osqp_time_limit_ = p.count("osqp_time_limit") ? p.at("osqp_time_limit") : 0.0;
 
         // residual-dynamics mode (absent = 0 = original behavior)
         dynamics_model_ = p.count("dynamics_model") ? (int)p.at("dynamics_model") : 0;
@@ -1009,6 +1028,7 @@ private:
         if (osqp_eps_prim_inf_ > 0) solver.settings()->setPrimalInfeasibilityTolerance(osqp_eps_prim_inf_);
         if (osqp_eps_abs_ > 0) solver.settings()->setAbsoluteTolerance(osqp_eps_abs_);
         if (osqp_eps_rel_ > 0) solver.settings()->setRelativeTolerance(osqp_eps_rel_);
+        if (osqp_time_limit_ > 0) solver.settings()->setTimeLimit(osqp_time_limit_);
         solver.data()->setNumberOfVariables((N+1)*nx+ N*nu + (N+1)+ 2*K_NEAR +nx);
         solver.data()->setNumberOfConstraints((N+1)*nx+ 2*(N+1) + N*nu + (N+1) + (N+1) + 2*K_NEAR + 2*nx+1);
 
@@ -1089,13 +1109,28 @@ private:
     }
 };
 
+#ifdef LMPC_BUILD_PYBIND
 PYBIND11_MODULE(lmpc_core, m){
     m.doc() = "ROS-free LearningMPC core (verbatim controller logic from src/LMPC.cpp)";
     py::class_<LMPCCore>(m, "LMPCCore")
-        .def(py::init<const std::map<std::string,double>&, py::array_t<int8_t>,
-                      uint32_t, uint32_t, double, double, double,
-                      const std::string&, const std::string&,
-                      double, double, double, const std::string&>(),
+        .def(py::init([](const std::map<std::string,double>& params,
+                          py::array_t<int8_t> grid_data,
+                          uint32_t width, uint32_t height,
+                          double resolution, double origin_x, double origin_y,
+                          const std::string& waypoint_file,
+                          const std::string& init_data_file,
+                          double x0, double y0, double yaw0,
+                          const std::string& reg_warmstart_file) {
+                 // LMPCCore itself takes a plain std::vector<int8_t> (kept
+                 // pybind11-free for the ROS2 C++ target); adapt here.
+                 auto buf = grid_data.request();
+                 const int8_t* ptr = static_cast<const int8_t*>(buf.ptr);
+                 std::vector<int8_t> grid(ptr, ptr + buf.size);
+                 return new LMPCCore(params, grid, width, height, resolution,
+                                      origin_x, origin_y, waypoint_file,
+                                      init_data_file, x0, y0, yaw0,
+                                      reg_warmstart_file);
+             }),
              py::arg("params"), py::arg("grid_data"),
              py::arg("width"), py::arg("height"),
              py::arg("resolution"), py::arg("origin_x"), py::arg("origin_y"),
@@ -1105,12 +1140,26 @@ PYBIND11_MODULE(lmpc_core, m){
         .def("set_state", &LMPCCore::set_state,
              py::arg("x"), py::arg("y"), py::arg("yaw"),
              py::arg("vx"), py::arg("vy"), py::arg("yawdot"))
-        .def("step", &LMPCCore::step)
+        .def("step", [](LMPCCore &self) {
+            LMPCCore::StepResult r = self.step();
+            return py::make_tuple(r.accel, r.steer, r.solved);
+        })
         .def("s_curr", &LMPCCore::s_curr)
         .def("iter", &LMPCCore::iter)
         .def("use_dyn", &LMPCCore::use_dyn)
         .def("reg_samples", &LMPCCore::reg_samples)
         .def("vel", &LMPCCore::vel)
         .def("track_length", &LMPCCore::track_length)
-        .def("predicted_states", &LMPCCore::predicted_states);
+        .def("predicted_states", [](LMPCCore &self) {
+            std::vector<std::vector<double>> rows = self.predicted_states();
+            int n_rows = (int)rows.size();
+            int n_cols = rows.empty() ? 0 : (int)rows[0].size();
+            py::array_t<double> out({n_rows, n_cols});
+            auto r = out.mutable_unchecked<2>();
+            for (int i = 0; i < n_rows; i++)
+                for (int j = 0; j < n_cols; j++)
+                    r(i, j) = rows[i][j];
+            return out;
+        });
 }
+#endif

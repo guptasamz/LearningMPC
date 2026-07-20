@@ -18,6 +18,7 @@ find_package(OsqpEigen CONFIG REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
 
 pybind11_add_module(lmpc_core cpp/lmpc_core.cpp)
+target_compile_definitions(lmpc_core PRIVATE LMPC_BUILD_PYBIND)
 
 target_include_directories(lmpc_core PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/cpp/ros_shim      # ROS/boost stand-ins (searched first)
