@@ -42,11 +42,19 @@ def generate_launch_description():
     )
     track_dir_arg = DeclareLaunchArgument(
         "track_dir", default_value=default_track_dir,
-        description="Directory containing <track>_waypoints.csv and "
-                     "<track>_initial_safe_set.csv (default: bundled barc_oval)",
+        description="Directory containing <track_name>_waypoints.csv and "
+                     "<track_name>_initial_safe_set.csv (default: bundled barc_oval)",
+    )
+    track_name_arg = DeclareLaunchArgument(
+        "track_name", default_value="barc_oval",
+        description="File prefix within track_dir -- must match track_dir's "
+                     "own track when overriding both (e.g. pure_pursuit_node's "
+                     "output_csv uses the same convention, see "
+                     "pure_pursuit.launch.py)",
     )
 
     track_dir = LaunchConfiguration("track_dir")
+    track_name = LaunchConfiguration("track_name")
 
     lmpc_node = Node(
         package="lmpc_ros2",
@@ -59,8 +67,8 @@ def generate_launch_description():
                 "pose_topic": LaunchConfiguration("pose_topic"),
                 "drive_topic": LaunchConfiguration("drive_topic"),
                 "map_topic": LaunchConfiguration("map_topic"),
-                "waypoint_csv": [track_dir, "/barc_oval_waypoints.csv"],
-                "init_safe_set_csv": [track_dir, "/barc_oval_initial_safe_set.csv"],
+                "waypoint_csv": [track_dir, "/", track_name, "_waypoints.csv"],
+                "init_safe_set_csv": [track_dir, "/", track_name, "_initial_safe_set.csv"],
             },
         ],
     )
@@ -70,5 +78,6 @@ def generate_launch_description():
         drive_topic_arg,
         map_topic_arg,
         track_dir_arg,
+        track_name_arg,
         lmpc_node,
     ])

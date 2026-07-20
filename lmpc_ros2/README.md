@@ -4,7 +4,13 @@ ROS2 (rclcpp) wrapper around `LMPCCore` (`../src_gym/cpp/lmpc_core.cpp`), same c
 `src/LMPC.cpp`, plus the `online_training/` residual-regression extension. No Python in the
 control loop — `lmpc_node` is a plain C++ executable linking Eigen/OSQP/osqp-eigen directly.
 
-Targets `f1tenth_gym_ros` first, then the real car. Same node either way — only
+Two executables, meant to run as separate steps:
+- **`lmpc_node`** — the LMPC controller. Needs a pre-recorded initial safe set to run at all.
+- **`pure_pursuit_node`** — drives a centerline via pure pursuit and *produces* that initial safe
+  set (see Section 5). No `LMPCCore`/Eigen/OSQP dependency; much lighter. Run this first for any
+  track that doesn't already have one.
+
+Targets `f1tenth_gym_ros` first, then the real car. Same nodes either way — only
 `pose_topic`/`drive_topic`/`map_topic` differ.
 
 **Docker required for everything below except Section 5 (real car).**
@@ -54,10 +60,11 @@ Background: `up -d`, then `logs -f`. Stop: `down`.
 Different track:
 ```bash
 docker compose -f lmpc_ros2/docker/docker-compose.yml run --rm lmpc \
-  ros2 launch lmpc_ros2 lmpc.launch.py track_dir:=/path/to/your/track_dir
+  ros2 launch lmpc_ros2 lmpc.launch.py track_dir:=/path/to/your/track_dir track_name:=my_track
 ```
-(`track_dir` must contain `<name>_waypoints.csv` / `<name>_initial_safe_set.csv`, and be visible
-inside the container.)
+(`track_dir` must contain `<track_name>_waypoints.csv` / `<track_name>_initial_safe_set.csv`, and
+be visible inside the container. `track_name` defaults to `barc_oval`, matching the bundled data.
+If you don't have an `_initial_safe_set.csv` for this track yet, see Section 5.)
 
 **Verify:**
 ```bash
@@ -92,7 +99,41 @@ max ≈21-31ms (bounded by `osqp_time_limit`). Real car compute is likely slower
 and other tracks solve differently — always re-check the overrun log on your actual target
 hardware/track, don't assume these numbers transfer. Docker itself adds negligible overhead.
 
-## 5. Real car deployment
+## 5. Generating a fresh initial safe set for a new track
+
+`lmpc_node` can't run without an `_initial_safe_set.csv` for whatever track it's pointed at — the
+bundled one only covers `barc_oval`. `pure_pursuit_node` produces a fresh one: it drives a
+`_centerline.csv` via pure pursuit + a capped-speed P-controller and records the same CSV format
+`LMPCCore` reads, stopping (and exiting) after `laps` laps (default 2). Same node either way, sim
+or real car — only `pose_topic`/`drive_topic` differ, same as `lmpc_node`.
+
+```bash
+docker compose -f lmpc_ros2/docker/docker-compose.yml run --rm lmpc \
+  ros2 launch lmpc_ros2 pure_pursuit.launch.py \
+  track_dir:=/path/to/your/track_dir track_name:=my_track max_speed:=2.0
+```
+
+`max_speed` has **no default — it's required**, both at the launch-argument level and inside the
+node itself (throws if `<= 0`). Keep it low, especially the first time on a new track or on the
+real car. It's used both as the P-controller's cruise target and as a hard clamp on the published
+`drive.speed`, so the car is never commanded faster than it by construction.
+
+Requires `<track_dir>/<track_name>_centerline.csv` to already exist (raw waypoints, format:
+`# x_m, y_m, w_tr_right_m, w_tr_left_m` header comment then comma-separated rows — see the
+bundled `data/barc_oval/barc_oval_centerline.csv` for a concrete example, also used by the
+default sim command below). **This repo has no
+tool to generate that file from a new venue's map** — you'll need to produce it some other way
+(e.g. mapping the track and extracting a centerline externally) before this section applies. The
+node writes `<track_dir>/<track_name>_initial_safe_set.csv` — the same path `lmpc.launch.py`
+reads when given the same `track_dir`/`track_name` — so the natural flow is: run this section,
+wait for it to exit ("wrote ... -- shutting down" in the log), then run Section 3's `lmpc_node`
+command with the same `track_dir`/`track_name`.
+
+On the real car, run the same command with `pose_topic:=/pf/pose/odom` (or whatever your
+localization publishes) — see Section 6 first for the general real-car checklist (bench test
+before track test applies here too, since this node drives the car).
+
+## 6. Real car deployment
 
 Docker not required here — build natively on the car's own compute.
 
@@ -117,5 +158,7 @@ source install/setup.bash
 4. `drive.speed` is an open-loop integration of commanded accel (`speed_cmd += accel * Ts`).
    Confirm your VESC/ackermann bridge expects that, not `drive.acceleration` directly — if not,
    it's a small change in `control_tick()` (`src/lmpc_node.cpp`).
-5. Point `map_topic`/`track_dir` at your venue's map and waypoints, not `barc_oval`.
-6. Have a physical e-stop within reach — this package provides none.
+5. Point `map_topic`/`track_dir` at your venue's map and waypoints, not `barc_oval` — if you don't
+   have an `_initial_safe_set.csv` for this venue yet, generate one first (Section 5).
+6. Have a physical e-stop within reach — this package provides none. This applies to
+   `pure_pursuit_node` (Section 5) too, not just `lmpc_node` — both drive the car.

@@ -57,7 +57,25 @@ target_compile_options(lmpc_node PRIVATE
   $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-O3>
 )
 
-install(TARGETS lmpc_node
+# Separate, lightweight executable: drives a centerline via pure pursuit and
+# records a fresh initial-safe-set CSV for lmpc_node to consume later -- no
+# LMPCCore/Eigen/OSQP dependency at all (see README.md's safe-set-generation
+# section).
+add_executable(pure_pursuit_node
+  src/pure_pursuit_node.cpp
+  src/pure_pursuit_main.cpp
+)
+target_include_directories(pure_pursuit_node PRIVATE include)
+ament_target_dependencies(pure_pursuit_node
+  rclcpp
+  nav_msgs
+  ackermann_msgs
+)
+target_compile_options(pure_pursuit_node PRIVATE
+  $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-O3>
+)
+
+install(TARGETS lmpc_node pure_pursuit_node
   DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY launch config data
