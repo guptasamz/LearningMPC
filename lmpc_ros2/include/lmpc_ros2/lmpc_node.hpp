@@ -45,17 +45,11 @@ private:
   std::string init_safe_set_csv_;
   std::string reg_warmstart_csv_;
   double Ts_ = 0.05;
-  double v_min_ = -5.0;
-  double v_max_ = 20.0;
 
   // -- live state, updated by odom_callback, consumed by control_tick --
   bool have_state_ = false;
   double x_ = 0.0, y_ = 0.0, yaw_ = 0.0;
   double vx_ = 0.0, vy_ = 0.0, yawdot_ = 0.0;
-
-  // -- open-loop speed integration for AckermannDriveStamped.drive.speed
-  // (see README.md: verify against the real drive stack's actual interface) --
-  double speed_cmd_ = 0.0;
 
   rclcpp::Time last_overrun_warn_;
 };

@@ -112,8 +112,6 @@ LmpcNode::LmpcNode() : rclcpp::Node("lmpc_node") {
   declare_num("dynamics_model", 0);
 
   Ts_ = controller_params_["Ts"];
-  v_min_ = this->declare_parameter<double>("v_min", -5.0);
-  v_max_ = this->declare_parameter<double>("v_max", 20.0);
 
   last_overrun_warn_ = this->now();
 
@@ -221,18 +219,19 @@ void LmpcNode::control_tick() {
                           "(LMPCCore's own fallback, not an error state)");
   }
 
-  // Open-loop accel -> speed integration: this controller's output is
-  // (acceleration, steering angle), not a target speed. Matches how
-  // f110_gym's direct_accel_control wrapper integrates commanded
-  // acceleration into velocity -- verify against your actual drive stack
-  // (some VESC/ackermann bridges accept drive.acceleration directly instead;
-  // see README.md).
-  speed_cmd_ += result.accel * Ts_;
-  speed_cmd_ = std::clamp(speed_cmd_, v_min_, v_max_);
-
+  // f1tenth_gym's vehicle model (base_classes.py's RaceCar::update_pose(),
+  // patched for this project -- see its "accl = vel" line/comment) treats
+  // drive_topic's speed field as a raw commanded ACCELERATION, applied
+  // directly each physics tick -- not a target velocity to track down
+  // toward. LMPCCore::step() already returns exactly that (the QP's own
+  // acceleration decision); publish it as-is. Re-integrating it into a
+  // synthetic speed_cmd_ first (the previous approach here) double-applied
+  // the integration the sim already does, and made "0" mean "hold current
+  // velocity" instead of an actual stop -- verify against your actual real-
+  // car drive stack's own expectation before deploying (see README.md).
   ackermann_msgs::msg::AckermannDriveStamped msg;
   msg.header.stamp = this->now();
-  msg.drive.speed = static_cast<float>(speed_cmd_);
+  msg.drive.speed = static_cast<float>(result.accel);
   msg.drive.steering_angle = static_cast<float>(result.steer);
   drive_pub_->publish(msg);
 }

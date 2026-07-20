@@ -59,6 +59,26 @@ std::vector<std::pair<double, double>> load_centerline(const std::string &path) 
   return pts;
 }
 
+// Brake-to-stop sequence parameters (see the stopping_/confirmed_stop_
+// branches in control_tick). Two phases, not one:
+//   1. stopping_: P-law braking (kp_speed_ * (0 - v_)), same control law as
+//      normal driving, until |v_| < kStopVelThresh.
+//   2. confirmed_stop_: publish an EXPLICIT 0.0 accel (not the P-law's
+//      output) for kConfirmedStopTicks. This matters because gym_bridge
+//      holds and reapplies whatever the LAST received drive command is
+//      forever once nothing publishes anymore (see the accel-vs-speed note
+//      below) -- phase 1's own final tick still has a small nonzero
+//      residual (v_ close to but not exactly 0 means accel is close to but
+//      not exactly 0 too), and holding THAT forever means the car drifts
+//      indefinitely instead of actually stopping. Phase 2 guarantees the
+//      truly-last command is an exact zero, repeated enough times to
+//      survive the known ROS2 publish-then-shutdown race (publish() hands
+//      off to DDS asynchronously; tearing the node down right after can
+//      drop a single message before it's actually sent).
+constexpr double kStopVelThresh = 0.05;      // m/s
+constexpr int kStopSafetyTicks = 100;        // ~5s fallback if v_ never converges
+constexpr int kConfirmedStopTicks = 20;      // ~1s at the default 0.05s control_dt_
+
 }  // namespace
 
 PurePursuitNode::PurePursuitNode() : rclcpp::Node("pure_pursuit_node") {
@@ -154,6 +174,44 @@ void PurePursuitNode::control_tick() {
     return;
   }
 
+  if (confirmed_stop_) {
+    // Phase 2: explicit, exact zero -- not the P-law's output -- repeated
+    // so the truly-last command gym_bridge holds forever is a real zero.
+    // See kConfirmedStopTicks's comment for why this phase exists at all.
+    ackermann_msgs::msg::AckermannDriveStamped stop;
+    stop.header.stamp = this->now();
+    stop.drive.speed = 0.0f;
+    stop.drive.steering_angle = 0.0f;
+    drive_pub_->publish(stop);
+    if (++confirmed_stop_ticks_ >= kConfirmedStopTicks) {
+      finish();
+    }
+    return;
+  }
+
+  if (stopping_) {
+    // Phase 1: brake to a real stop with the same P-law as normal driving,
+    // just targeting 0 instead of max_speed_ -- v_ is live odometry
+    // feedback, so this actually converges to rest instead of assuming
+    // zero commanded accel gets there on its own (it doesn't -- see the
+    // accel-vs-speed note below). kStopSafetyTicks is just a fallback
+    // bound in case v_ somehow never converges (e.g. odometry stalls); it
+    // shouldn't normally be what ends this phase.
+    double accel = kp_speed_ * (0.0 - v_);
+    accel = std::clamp(accel, -accel_limit_, accel_limit_);
+    ackermann_msgs::msg::AckermannDriveStamped stop;
+    stop.header.stamp = this->now();
+    stop.drive.speed = static_cast<float>(accel);
+    stop.drive.steering_angle = 0.0f;
+    drive_pub_->publish(stop);
+    ++stop_ticks_;
+    if (std::abs(v_) < kStopVelThresh || stop_ticks_ >= kStopSafetyTicks) {
+      stopping_ = false;
+      confirmed_stop_ = true;
+    }
+    return;
+  }
+
   // -- nearest-point arc-length lookup (linear scan -- dense_x_/dense_y_
   // are a few thousand points at most, called at control_dt_ rate, trivial
   // cost; same approach as record_initial_ss.py's s_of()) --
@@ -178,7 +236,11 @@ void PurePursuitNode::control_tick() {
     row_t_ = 0;
     lap_++;
     if (lap_ > laps_ - 1) {
-      finish();
+      // Recording is done -- close the file now, but hold off on shutdown
+      // (see the stopping_ branch above) until the stop command has had a
+      // chance to actually reach gym_bridge.
+      out_file_.close();
+      stopping_ = true;
       return;
     }
   }
@@ -205,24 +267,29 @@ void PurePursuitNode::control_tick() {
             << accel << "," << steer << "," << s_curr << "\n";
   row_t_++;
 
-  speed_cmd_ += accel * control_dt_;
-  speed_cmd_ = std::clamp(speed_cmd_, 0.0, max_speed_);
-
+  // f1tenth_gym's vehicle model (base_classes.py's RaceCar::update_pose(),
+  // patched for this project -- see its "accl = vel" line/comment) treats
+  // drive_topic's speed field as a raw commanded ACCELERATION, applied
+  // directly each physics tick -- not a target velocity to track down
+  // toward. accel above (the P-law's own output) is already exactly that;
+  // publish it as-is. Integrating it into a synthetic speed_cmd_ first (the
+  // previous approach here) double-applied the integration the sim already
+  // does -- max_speed_ ended up bounding an "acceleration" instead of the
+  // actual velocity (so the car could and did exceed it), and commanding
+  // "0" only zeroed acceleration -- i.e. "hold current velocity" -- not an
+  // actual stop.
   ackermann_msgs::msg::AckermannDriveStamped msg;
   msg.header.stamp = this->now();
-  msg.drive.speed = static_cast<float>(speed_cmd_);
+  msg.drive.speed = static_cast<float>(accel);
   msg.drive.steering_angle = static_cast<float>(steer);
   drive_pub_->publish(msg);
 }
 
 void PurePursuitNode::finish() {
+  // out_file_ is already closed (control_tick's lap-completion branch), and
+  // an explicit zero-accel command has been repeated for kConfirmedStopTicks
+  // -- safe to actually shut down.
   done_ = true;
-  ackermann_msgs::msg::AckermannDriveStamped stop;
-  stop.header.stamp = this->now();
-  stop.drive.speed = 0.0f;
-  stop.drive.steering_angle = 0.0f;
-  drive_pub_->publish(stop);
-  out_file_.close();
   RCLCPP_INFO(this->get_logger(), "wrote %s (%d laps) -- shutting down",
               output_csv_.c_str(), laps_);
   rclcpp::shutdown();

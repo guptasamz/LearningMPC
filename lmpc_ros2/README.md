@@ -146,7 +146,9 @@ source install/setup.bash
 3. Point `map_topic`/`track_dir` at your venue, not `barc_oval`.
 4. **No `_initial_safe_set.csv` for this venue?** Stop and do Section 3 first — not optional.
 5. Bench test first (wheels off the ground) for both nodes — confirm `/drive` looks sane.
-6. `drive.speed` is an open-loop accel integration (`speed_cmd += accel * Ts`) — confirm your
-   VESC/ackermann bridge expects that, not `drive.acceleration` (else: small change in
-   `control_tick()`, `src/lmpc_node.cpp`).
+6. `drive.speed` carries a raw commanded **acceleration**, published directly — matching this
+   project's vendored/patched `f1tenth_gym` (`base_classes.py`'s `RaceCar::update_pose()` treats
+   the field that way, not as a target velocity). Confirm your VESC/ackermann bridge expects an
+   acceleration in that field, not a target speed — if it wants the latter, that's a small change
+   in `control_tick()` (`src/lmpc_node.cpp`), not the reverse.
 7. Have a physical e-stop within reach — this package provides none.

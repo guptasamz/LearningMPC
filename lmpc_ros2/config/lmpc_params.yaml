@@ -39,9 +39,6 @@ lmpc_node:
     # 0 = original known-dynamics model; 1 = kinematic nominal + online
     # residual regression (online_training/) -- see README.md.
     dynamics_model: 0.0
-    # output clamp for the open-loop accel->speed integration
-    v_min: -5.0
-    v_max: 20.0
 
 pure_pursuit_node:
   ros__parameters:

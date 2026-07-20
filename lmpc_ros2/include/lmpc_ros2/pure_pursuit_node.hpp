@@ -27,7 +27,7 @@ public:
 private:
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
   void control_tick();
-  void finish();  // publish a final stop, close the file, shut down
+  void finish();  // shut down, once the stop-command grace period has elapsed
 
   // -- ROS I/O --
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
@@ -65,8 +65,12 @@ private:
   bool s_prev_valid_ = false;
   bool done_ = false;
 
-  // -- open-loop speed integration, same convention as lmpc_node --
-  double speed_cmd_ = 0.0;
+  // -- stop sequence: laps done, braking to rest, then holding an explicit
+  // zero before shutdown (see finish()/control_tick()) --
+  bool stopping_ = false;
+  bool confirmed_stop_ = false;
+  int stop_ticks_ = 0;
+  int confirmed_stop_ticks_ = 0;
 };
 
 }  // namespace lmpc_ros2
