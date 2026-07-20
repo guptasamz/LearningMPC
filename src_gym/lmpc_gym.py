@@ -152,6 +152,18 @@ def main():
                     help="override r_accel (input effort weight on acceleration)")
     ap.add_argument("--r-steer", type=float, default=None,
                     help="override r_steer (input effort weight on steering)")
+    ap.add_argument("--dynamics", choices=["known", "residual"], default="known",
+                    help="prediction model: 'known' = original kinematic/"
+                         "single-track pair; 'residual' = kinematic nominal + "
+                         "online error-dynamics regression (Xue et al.)")
+    ap.add_argument("--reg-warmstart", default=None,
+                    help="dynamics-pairs csv (record_initial_ss.py --out-dyn) "
+                         "to seed the residual regression buffer at startup")
+    ap.add_argument("--env-dv", type=float, default=None,
+                    help="experience speed envelope: planned speed at any track "
+                         "position <= max driven there + ENV_DV [m/s] (0/absent "
+                         "= off). Bounds the learnt model's optimism at the "
+                         "grip limit so lap times converge instead of crashing")
     args = ap.parse_args()
 
     global MAP_STEM, WAYPOINT_CSV, INIT_SS_CSV
@@ -165,6 +177,12 @@ def main():
         print(f"initial safe set override: {args.ss_file}")
 
     params = numeric_params(PARAMS_YAML)
+    if args.dynamics == "residual":
+        params["dynamics_model"] = 1.0
+        print("dynamics model: kinematic nominal + residual regression")
+    if args.env_dv is not None:
+        params["env_dv"] = args.env_dv
+        print(f"experience speed envelope: driven max + {args.env_dv} m/s")
     if args.rd is not None:
         params["r_d_accel"] = args.rd
         params["r_d_steer"] = args.rd
@@ -194,7 +212,8 @@ def main():
         params=params, grid_data=grid, width=w, height=h,
         resolution=res, origin_x=ox, origin_y=oy,
         waypoint_file=WAYPOINT_CSV, init_data_file=INIT_SS_CSV,
-        x0=sx, y0=sy, yaw0=syaw)
+        x0=sx, y0=sy, yaw0=syaw,
+        reg_warmstart_file=args.reg_warmstart or "")
     print(f"track length: {core.track_length():.2f} m")
 
     env = gym.make("f110_gym:f110-v0", map=MAP_STEM, map_ext=".png",
@@ -227,7 +246,11 @@ def main():
                           # model-prediction audit: QP's predicted state for the
                           # NEXT control instant vs what the sim actually did
                           "pred_x", "pred_y", "pred_yaw", "pred_v",
-                          "pred_yawdot", "pred_slip"])
+                          "pred_yawdot", "pred_slip",
+                          # measured plant state (body velocities, yaw rate,
+                          # actual steering angle) — targets for residual
+                          # dynamics learning
+                          "meas_vx", "meas_vy", "meas_yawdot", "meas_steer"])
     lap_log_path = os.path.join(args.out, f"laps_{run_tag}.csv")
     lap_log = open(lap_log_path, "w", newline="")
     lap_writer = csv.writer(lap_log)
@@ -247,6 +270,7 @@ def main():
     while True:
         st = env.sim.agents[0].state  # [x, y, steer, v, yaw, yaw_rate, slip]
         x, y, v, yaw, yawdot, slip = st[0], st[1], st[3], st[4], st[5], st[6]
+        steer_state = st[2]  # scalar copy: st is a live view, mutates on env.step
         core.set_state(x=x, y=y, yaw=yaw,
                        vx=v * math.cos(slip), vy=v * math.sin(slip),
                        yawdot=yawdot)
@@ -285,7 +309,9 @@ def main():
                               f"{accel:.4f}", f"{steer:.4f}",
                               int(core.use_dyn()), int(solved), core.iter(),
                               f"{pred[0]:.4f}", f"{pred[1]:.4f}", f"{pred[2]:.4f}",
-                              f"{pred[3]:.4f}", f"{pred[4]:.4f}", f"{pred[5]:.4f}"])
+                              f"{pred[3]:.4f}", f"{pred[4]:.4f}", f"{pred[5]:.4f}",
+                              f"{v * math.cos(slip):.5f}", f"{v * math.sin(slip):.5f}",
+                              f"{yawdot:.5f}", f"{steer_state:.5f}"])
         if args.render:
             env.render(mode="human")
         if crashed:

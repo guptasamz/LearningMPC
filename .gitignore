@@ -8,3 +8,5 @@ src_gym/deps/
 src_gym/*.so
 src_gym/results/
 src_gym/results_*
+online_training/cpp/build
+online_training/residual_core.cpython-310-darwin.so

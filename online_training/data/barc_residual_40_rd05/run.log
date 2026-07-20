@@ -1,0 +1,54 @@
+/Users/samirgupta/Desktop/WORK/Vanderbilt_work/Research/After_12th_December_2023/24_ICCPS_2027/Single_Episode_change/Baselines/LearningMPC/f1tenth_gym/gym/f110_gym/envs/base_classes.py:95: UserWarning: Chosen integrator is RK4. This is different from previous versions of the gym.
+  warnings.warn(f"Chosen integrator is RK4. This is different from previous versions of the gym.")
+dynamics model: kinematic nominal + residual regression
+control-rate cost override: r_d = 0.5
+SPEED_MAX override: 20.0 m/s
+track length: 25.52 m
+live lap-time plot: ../online_training/data/barc_residual_40_rd05/lap_times.png (updates after every lap)
+lap 2 (iter): 16.75 s   mean 1.52 m/s
+lap 3 (iter): 14.60 s   mean 1.75 m/s
+lap 4 (iter): 14.20 s   mean 1.80 m/s
+lap 5 (iter): 13.85 s   mean 1.84 m/s
+lap 6 (iter): 13.25 s   mean 1.93 m/s
+lap 7 (iter): 12.75 s   mean 2.00 m/s
+lap 8 (iter): 12.40 s   mean 2.06 m/s
+lap 9 (iter): 12.05 s   mean 2.12 m/s
+lap 10 (iter): 11.75 s   mean 2.17 m/s
+lap 11 (iter): 11.45 s   mean 2.23 m/s
+lap 12 (iter): 11.20 s   mean 2.28 m/s
+lap 13 (iter): 10.90 s   mean 2.34 m/s
+lap 14 (iter): 10.75 s   mean 2.37 m/s
+lap 15 (iter): 10.45 s   mean 2.44 m/s
+lap 16 (iter): 10.25 s   mean 2.49 m/s
+lap 17 (iter): 10.10 s   mean 2.53 m/s
+lap 18 (iter): 9.90 s   mean 2.58 m/s
+lap 19 (iter): 9.75 s   mean 2.62 m/s
+lap 20 (iter): 9.65 s   mean 2.64 m/s
+lap 21 (iter): 9.55 s   mean 2.67 m/s
+lap 22 (iter): 9.45 s   mean 2.70 m/s
+lap 23 (iter): 9.30 s   mean 2.74 m/s
+lap 24 (iter): 9.20 s   mean 2.77 m/s
+lap 25 (iter): 9.15 s   mean 2.79 m/s
+lap 26 (iter): 9.00 s   mean 2.84 m/s
+lap 27 (iter): 8.95 s   mean 2.85 m/s
+lap 28 (iter): 8.85 s   mean 2.88 m/s
+lap 29 (iter): 8.80 s   mean 2.90 m/s
+lap 30 (iter): 8.75 s   mean 2.92 m/s
+lap 31 (iter): 8.65 s   mean 2.95 m/s
+lap 32 (iter): 8.60 s   mean 2.97 m/s
+lap 33 (iter): 8.55 s   mean 2.98 m/s
+lap 34 (iter): 8.45 s   mean 3.02 m/s
+lap 35 (iter): 8.40 s   mean 3.04 m/s
+lap 36 (iter): 8.40 s   mean 3.04 m/s
+lap 37 (iter): 8.30 s   mean 3.07 m/s
+lap 38 (iter): 8.20 s   mean 3.11 m/s
+lap 39 (iter): 8.20 s   mean 3.11 m/s
+lap 40 (iter): 8.15 s   mean 3.13 m/s
+lap 41 (iter): 8.10 s   mean 3.15 m/s
+lap trajectory plot: ../online_training/data/barc_residual_40_rd05/lap_trajectories.png
+
+==== summary ====
+laps completed: 40  crashed: False  solver failures: 0
+lap times: 16.7 14.6 14.2 13.8 13.3 12.8 12.4 12.1 11.8 11.4 11.2 10.9 10.7 10.4 10.2 10.1 9.9 9.7 9.6 9.5 9.4 9.3 9.2 9.1 9.0 8.9 8.8 8.8 8.7 8.6 8.6 8.5 8.4 8.4 8.4 8.3 8.2 8.2 8.1 8.1
+first: 16.75s  best: 8.10s
+wall time: 56.6s, lap log: ../online_training/data/barc_residual_40_rd05/laps_20260717_105708.csv

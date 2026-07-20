@@ -35,6 +35,8 @@
 #include "OsqpEigen/OsqpEigen.h"
 #include <unsupported/Eigen/MatrixFunctions>
 #include <LearningMPC/car_params.h>
+#include <error_regression.hpp>   // online_training/cpp: nominal+residual model
+#include <memory>
 
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
@@ -77,9 +79,27 @@ public:
              double resolution, double origin_x, double origin_y,
              const std::string& waypoint_file,
              const std::string& init_data_file,
-             double x0, double y0, double yaw0){
+             double x0, double y0, double yaw0,
+             const std::string& reg_warmstart_file = ""){
 
         getParameters(params);
+
+        if (dynamics_model_ == 1) {
+            reg_.reset(new residual::ErrorDynamicsRegressor(
+                car.l_f, car.l_r, Ts,
+                params.count("reg_dist_max") ? params.at("reg_dist_max") : 2.0,
+                params.count("reg_k_max") ? (int)params.at("reg_k_max") : 256,
+                params.count("reg_ridge") ? params.at("reg_ridge") : 1e-3,
+                params.count("reg_min_pts") ? (int)params.at("reg_min_pts") : 10,
+                true,
+                // ring-buffer cap (samples). 200k = never binding for sim
+                // campaigns (measured: capping to 30k cost +6-49% RMSE on
+                // Sepang-scale data); keep smaller on the real car where the
+                // plant is non-stationary and recency matters.
+                params.count("reg_buffer_max") ? (int)params.at("reg_buffer_max") : 200000));
+            if (!reg_warmstart_file.empty())
+                load_reg_warmstart(reg_warmstart_file);
+        }
 
         /* init_occupancy_grid() equivalent: grid passed in, then inflated
          * exactly as the original (occupancy_grid::inflate_map with MAP_MARGIN) */
@@ -110,6 +130,15 @@ public:
         time_ = 0;           // uninitialized in original (UB); intended value
         last_solve_ok_ = true;
         init_SS_from_data(init_data_file);
+
+        // seed the speed envelope from the initial safe-set laps
+        if (ENV_DV > 0.0) {
+            env_vmax_.assign((size_t)std::ceil(track_->length / ENV_BIN_W), 0.0);
+            for (const auto& traj : SS_)
+                for (const auto& smp : traj)
+                    env_vmax_[env_bin(smp.s)] =
+                        max(env_vmax_[env_bin(smp.s)], smp.x(3));
+        }
     }
 
     ~LMPCCore(){ delete track_; }
@@ -123,6 +152,28 @@ public:
         vel_ = sqrt(pow(vx,2) + pow(vy,2));
         yawdot_ = yawdot;
         slip_angle_ = atan2(vy, vx);
+
+        // residual mode: record the one-step pair (w_prev, u_applied, w_now)
+        // for the error regression, gated on speed like the offline eval
+        if (dynamics_model_ == 1) {
+            Matrix<double, 3, 1> w_now;
+            w_now << vx, vy, yawdot;
+            if (prev_w_valid_ && u_applied_valid_ &&
+                prev_w_.head<2>().norm() > reg_sample_gate_ &&
+                w_now.head<2>().norm() > reg_sample_gate_) {
+                Eigen::MatrixXd X(1,3), U(1,2), Xn(1,3);
+                X << prev_w_(0), prev_w_(1), prev_w_(2);
+                U << u_prev_applied_(0), u_prev_applied_(1);
+                Xn << w_now(0), w_now(1), w_now(2);
+                reg_->add_samples(X, U, Xn);
+            }
+            prev_w_ = w_now;
+            prev_w_valid_ = true;
+        }
+
+        // envelope learns from what the car ACTUALLY drove
+        if (ENV_DV > 0.0 && !env_vmax_.empty())
+            env_vmax_[env_bin(s_curr_)] = max(env_vmax_[env_bin(s_curr_)], vel_);
 
         /** STATE MACHINE: check if dynamic model should be used based on current speed **/
         if ((!use_dyn_) && (vel_ > VEL_THRESHOLD)){
@@ -171,6 +222,7 @@ public:
         steer = min(steer, 0.41f);
         steer = max(steer, -0.41f);
         u_prev_applied_ << accel, steer;   // u_{-1} anchor for the rate cost
+        u_applied_valid_ = true;           // residual mode: sample pairs may start
 
         add_point();
         /*** store info and advance to next time step***/
@@ -186,6 +238,7 @@ public:
     double s_curr() const { return s_curr_; }
     int iter() const { return iter_; }
     bool use_dyn() const { return use_dyn_; }
+    long reg_samples() const { return reg_ ? (long)reg_->n_samples() : 0; }
     double track_length() const { return track_->length; }
     double vel() const { return vel_; }
     py::array_t<double> predicted_states(){
@@ -230,6 +283,37 @@ private:
     double osqp_eps_abs_;
     double osqp_eps_rel_;
 
+    // dynamics model switch (Xue et al., arXiv:2309.10716):
+    //   0 = original ("known" kinematic/single-track pair, ZOH linearization)
+    //   1 = kinematic nominal + locally regressed error dynamics; the
+    //       regression buffer is fed online from measured states in
+    //       set_state(). The use_dyn_ state machine is kept as the low-speed
+    //       gate (below VEL_THRESHOLD the original kinematic branch runs).
+    int dynamics_model_;
+    std::unique_ptr<residual::ErrorDynamicsRegressor> reg_;
+    double reg_sample_gate_;                  // min speed to record a sample
+    Matrix<double, 3, 1> prev_w_;             // last measured (vx, vy, omega)
+    bool prev_w_valid_ = false;
+    bool u_applied_valid_ = false;            // u_prev_applied_ meaningful
+
+    // Experience-bounded speed envelope (env_dv param; 0/absent = off).
+    // Learnt models have no tire saturation, so the LMPC ratchets corner
+    // speed past the true limit and crashes near convergence. This caps the
+    // QP's per-stage speed at (max speed ever DRIVEN at that track position)
+    // + ENV_DV: exploration continues, but only ENV_DV faster per pass than
+    // proven-feasible experience.
+    double ENV_DV;
+    static constexpr double ENV_BIN_W = 0.5;  // [m] track-position bin width
+    std::vector<double> env_vmax_;
+    inline int env_bin(double s) const {
+        int b = (int)(s / ENV_BIN_W);
+        const int n = (int)env_vmax_.size();
+        return ((b % n) + n) % n;
+    }
+    inline double env_cap(double s) const {
+        return env_vmax_[env_bin(s)] + ENV_DV;
+    }
+
     Track* track_;
     //odometry
     Vector3d car_pos_;
@@ -257,6 +341,27 @@ private:
     bool first_run_;
     vector<geometry_msgs::Point> border_lines_;
     bool last_solve_ok_;
+
+    /* Warm-start the residual regression from a recorded dynamics-pairs csv
+     * (record_initial_ss.py --out-dyn): rows
+     *   vx, vy, yawdot, accel, steer, vx1, vy1, yawdot1
+     * — the paper's "few slow path-follower laps seed the error model". */
+    void load_reg_warmstart(const std::string& file){
+        CSVReader reader(file);
+        auto rows = reader.getData();
+        if (rows.empty()) { cout << "[LMPC] empty warm-start file " << file << endl; return; }
+        Eigen::MatrixXd X(rows.size(), 3), U(rows.size(), 2), Xn(rows.size(), 3);
+        Eigen::Index n = 0;
+        for (auto& r : rows){
+            if (r.size() < 8) continue;
+            X(n,0) = std::stod(r[0]); X(n,1) = std::stod(r[1]); X(n,2) = std::stod(r[2]);
+            U(n,0) = std::stod(r[3]); U(n,1) = std::stod(r[4]);
+            Xn(n,0) = std::stod(r[5]); Xn(n,1) = std::stod(r[6]); Xn(n,2) = std::stod(r[7]);
+            n++;
+        }
+        reg_->add_samples(X.topRows(n), U.topRows(n), Xn.topRows(n));
+        cout << "[LMPC] residual warm-start: " << n << " pairs from " << file << endl;
+    }
 
     /* getParameters, verbatim reads from the same-named yaml keys */
     void getParameters(const std::map<std::string,double>& p){
@@ -293,6 +398,11 @@ private:
         osqp_eps_prim_inf_ = p.count("osqp_eps_prim_inf") ? p.at("osqp_eps_prim_inf") : 0.0;
         osqp_eps_abs_ = p.count("osqp_eps_abs") ? p.at("osqp_eps_abs") : 0.0;
         osqp_eps_rel_ = p.count("osqp_eps_rel") ? p.at("osqp_eps_rel") : 0.0;
+
+        // residual-dynamics mode (absent = 0 = original behavior)
+        dynamics_model_ = p.count("dynamics_model") ? (int)p.at("dynamics_model") : 0;
+        reg_sample_gate_ = p.count("reg_sample_gate") ? p.at("reg_sample_gate") : 1.0;
+        ENV_DV = p.count("env_dv") ? p.at("env_dv") : 0.0;   // 0 = envelope off
 
         car.wheelbase = p.at("wheelbase");
         car.friction_coeff = p.at("friction_coeff");
@@ -469,9 +579,68 @@ private:
         return Vector3d(pos(0), pos(1), yaw);
     }
 
+    /* Residual mode (dynamics_model_ == 1): DISCRETE linearization of
+     *   pose:      Euler at Ts (exact integration of velocities)
+     *   velocities: learnt map w+ = f_nom(w,u) + e_reg(w,u) in
+     *               w = (v_x, v_y, omega) space, sandwiched into the QP's
+     *               (v, omega, beta) coordinates by the chain rule through
+     *               m: (v, beta) -> (v_x, v_y) and its inverse at w+.
+     * Replaces the continuous-linearize + ZOH path of the original. */
+    void get_residual_dynamics(Matrix<double,nx,nx>& Ad, Matrix<double,nx,nu>& Bd,
+            Matrix<double,nx,1>& hd, const Matrix<double,nx,1>& x_op,
+            const Matrix<double,nu,1>& u_op){
+
+        const double yaw = x_op(2), v = x_op(3), omega = x_op(4), beta = x_op(5);
+
+        Eigen::Vector3d w(v*cos(beta), v*sin(beta), omega);
+        Eigen::Vector2d u(u_op(0), u_op(1));
+        Eigen::Matrix3d Gw;
+        Matrix<double,3,2> Gu;
+        Eigen::Vector3d w1;
+        reg_->linearize_velocity(w, u, Gw, Gu, w1);  // nominal-only if data thin
+
+        // chain rule: (v, omega, beta) -> w -> w+ -> (v+, omega+, beta+)
+        Eigen::Matrix3d Jm;             // d(vx, vy, omega)/d(v, omega, beta)
+        Jm << cos(beta), 0.0, -v*sin(beta),
+              sin(beta), 0.0,  v*cos(beta),
+              0.0,       1.0,  0.0;
+        const double v1 = max(hypot(w1(0), w1(1)), 0.1);
+        const double beta1 = atan2(w1(1), w1(0));
+        Eigen::Matrix3d Jinv;           // d(v, omega, beta)/d(vx, vy, omega) at w+
+        Jinv << cos(beta1),      sin(beta1),     0.0,
+                0.0,             0.0,            1.0,
+                -sin(beta1)/v1,  cos(beta1)/v1,  0.0;
+        const Eigen::Matrix3d Avel = Jinv * Gw * Jm;
+        const Matrix<double,3,2> Bvel = Jinv * Gu;
+
+        Ad.setZero(); Bd.setZero();
+        // pose rows: x+ = x + Ts v cos(yaw+beta), y+ = y + Ts v sin(yaw+beta),
+        //            yaw+ = yaw + Ts omega
+        const double c = cos(yaw + beta), s = sin(yaw + beta);
+        Ad(0,0) = 1.0; Ad(0,2) = -Ts*v*s; Ad(0,3) = Ts*c; Ad(0,5) = -Ts*v*s;
+        Ad(1,1) = 1.0; Ad(1,2) =  Ts*v*c; Ad(1,3) = Ts*s; Ad(1,5) =  Ts*v*c;
+        Ad(2,2) = 1.0; Ad(2,4) = Ts;
+        Ad.block<3,3>(3,3) = Avel;
+        Bd.block<3,2>(3,0) = Bvel;
+
+        Matrix<double,nx,1> x_next;
+        x_next << x_op(0) + Ts*v*c,
+                  x_op(1) + Ts*v*s,
+                  yaw + Ts*omega,
+                  v1, w1(2), beta1;
+        hd = x_next - Ad*x_op - Bd*u_op;
+    }
+
     // verbatim from LMPC.cpp
     void get_linearized_dynamics(Matrix<double,nx,nx>& Ad, Matrix<double,nx, nu>& Bd, Matrix<double,nx,1>& hd,
             Matrix<double,nx,1>& x_op, Matrix<double,nu,1>& u_op, bool use_dyn){
+
+        // residual mode replaces the dynamic-model branch; the low-speed
+        // kinematic branch (use_dyn == false) stays as the launch fallback
+        if (dynamics_model_ == 1 && use_dyn){
+            get_residual_dynamics(Ad, Bd, hd, x_op, u_op);
+            return;
+        }
 
         double yaw = x_op(2);
         double v = x_op(3);
@@ -743,10 +912,14 @@ private:
                 upper.segment<nu>((N+1)*nx+ 2*(N+1) +i*nu) << ACCELERATION_MAX, STEER_MAX;
             }
 
-            //max velocity
+            //max velocity; with the experience envelope on, planned speed at
+            //this track position may exceed driven experience by at most
+            //ENV_DV (stage 0 is pinned by the x0 equality — leave it global)
             constraintMatrix.insert((N+1)*nx+ 2*(N+1) + N*nu +i, i*nx+3) = 1;
             lower((N+1)*nx+ 2*(N+1) + N*nu +i) = 0;
-            upper((N+1)*nx+ 2*(N+1) + N*nu +i) = SPEED_MAX;
+            upper((N+1)*nx+ 2*(N+1) + N*nu +i) =
+                (ENV_DV > 0.0 && i > 0) ? min(SPEED_MAX, env_cap(s_ref))
+                                        : SPEED_MAX;
 
             // s_k >= 0
             constraintMatrix.insert((N+1)*nx + 2*(N+1) + N*nu + (N+1) + i, (N+1)*nx+N*nu +i) = 1.0;
@@ -922,12 +1095,13 @@ PYBIND11_MODULE(lmpc_core, m){
         .def(py::init<const std::map<std::string,double>&, py::array_t<int8_t>,
                       uint32_t, uint32_t, double, double, double,
                       const std::string&, const std::string&,
-                      double, double, double>(),
+                      double, double, double, const std::string&>(),
              py::arg("params"), py::arg("grid_data"),
              py::arg("width"), py::arg("height"),
              py::arg("resolution"), py::arg("origin_x"), py::arg("origin_y"),
              py::arg("waypoint_file"), py::arg("init_data_file"),
-             py::arg("x0"), py::arg("y0"), py::arg("yaw0"))
+             py::arg("x0"), py::arg("y0"), py::arg("yaw0"),
+             py::arg("reg_warmstart_file") = "")
         .def("set_state", &LMPCCore::set_state,
              py::arg("x"), py::arg("y"), py::arg("yaw"),
              py::arg("vx"), py::arg("vy"), py::arg("yawdot"))
@@ -935,6 +1109,7 @@ PYBIND11_MODULE(lmpc_core, m){
         .def("s_curr", &LMPCCore::s_curr)
         .def("iter", &LMPCCore::iter)
         .def("use_dyn", &LMPCCore::use_dyn)
+        .def("reg_samples", &LMPCCore::reg_samples)
         .def("vel", &LMPCCore::vel)
         .def("track_length", &LMPCCore::track_length)
         .def("predicted_states", &LMPCCore::predicted_states);

@@ -1,0 +1,59 @@
+/Users/samirgupta/Desktop/WORK/Vanderbilt_work/Research/After_12th_December_2023/24_ICCPS_2027/Single_Episode_change/Baselines/LearningMPC/f1tenth_gym/gym/f110_gym/envs/base_classes.py:95: UserWarning: Chosen integrator is RK4. This is different from previous versions of the gym.
+  warnings.warn(f"Chosen integrator is RK4. This is different from previous versions of the gym.")
+[OsqpEigen::Solver::solve] The solution is unfeasible.
+[LMPC DEBUG] QP failure (init_ok=1) nonfinite: grad=0 lower=0
+[LMPC DEBUG] NaN lower=0 NaN upper=0 nonfinite H=0 nonfinite A=0
+[LMPC DEBUG] x0 =    0.881735      4.5679     2.15754     1.88521   -0.466878 -0.00791459 use_dyn=1
+[LMPC DEBUG] k=0 xref=(0.934279,4.4896) v=1.8866 s_ref=11.55 lw=0.08 rw=0.32 dx'=-0.461034 dy'=0.887582 boundlo=-3.04367 boundhi=-2.6436
+[LMPC DEBUG] k=1 xref=(0.881769,4.568) v=1.88522 s_ref=11.65 lw=0.1 rw=0.32 dx'=-0.424136 dy'=0.905757 boundlo=-2.89392 boundhi=-2.47386
+[LMPC DEBUG] k=2 xref=(0.831197,4.64756) v=1.88366 s_ref=11.75 lw=0.12 rw=0.28 dx'=-0.387718 dy'=0.92192 boundlo=-2.70077 boundhi=-2.30072
+SPEED_MAX override: 20.0 m/s
+track length: 25.52 m
+live lap-time plot: ../online_training/data/barc_known_40/lap_times.png (updates after every lap)
+lap 2 (iter): 15.45 s   mean 1.65 m/s
+lap 3 (iter): 12.75 s   mean 2.00 m/s
+lap 4 (iter): 11.90 s   mean 2.14 m/s
+lap 5 (iter): 11.10 s   mean 2.30 m/s
+lap 6 (iter): 10.50 s   mean 2.43 m/s
+lap 7 (iter): 10.00 s   mean 2.55 m/s
+lap 8 (iter): 9.60 s   mean 2.66 m/s
+lap 9 (iter): 9.15 s   mean 2.79 m/s
+lap 10 (iter): 8.90 s   mean 2.87 m/s
+lap 11 (iter): 8.65 s   mean 2.95 m/s
+lap 12 (iter): 8.40 s   mean 3.04 m/s
+lap 13 (iter): 8.15 s   mean 3.13 m/s
+lap 14 (iter): 8.05 s   mean 3.17 m/s
+lap 15 (iter): 7.85 s   mean 3.25 m/s
+lap 16 (iter): 7.65 s   mean 3.34 m/s
+lap 17 (iter): 7.55 s   mean 3.38 m/s
+lap 18 (iter): 7.45 s   mean 3.43 m/s
+lap 19 (iter): 7.30 s   mean 3.50 m/s
+lap 20 (iter): 7.15 s   mean 3.57 m/s
+lap 21 (iter): 7.05 s   mean 3.62 m/s
+lap 22 (iter): 6.95 s   mean 3.67 m/s
+lap 23 (iter): 6.90 s   mean 3.70 m/s
+lap 24 (iter): 6.75 s   mean 3.78 m/s
+lap 25 (iter): 6.70 s   mean 3.81 m/s
+lap 26 (iter): 6.65 s   mean 3.84 m/s
+lap 27 (iter): 6.55 s   mean 3.90 m/s
+lap 28 (iter): 6.45 s   mean 3.96 m/s
+lap 29 (iter): 6.40 s   mean 3.99 m/s
+lap 30 (iter): 6.35 s   mean 4.02 m/s
+lap 31 (iter): 6.30 s   mean 4.05 m/s
+lap 32 (iter): 6.25 s   mean 4.08 m/s
+lap 33 (iter): 6.15 s   mean 4.15 m/s
+lap 34 (iter): 6.10 s   mean 4.18 m/s
+lap 35 (iter): 6.05 s   mean 4.22 m/s
+lap 36 (iter): 6.00 s   mean 4.25 m/s
+lap 37 (iter): 5.95 s   mean 4.29 m/s
+lap 38 (iter): 5.95 s   mean 4.29 m/s
+lap 39 (iter): 5.85 s   mean 4.36 m/s
+lap 40 (iter): 5.85 s   mean 4.36 m/s
+lap 41 (iter): 5.80 s   mean 4.40 m/s
+lap trajectory plot: ../online_training/data/barc_known_40/lap_trajectories.png
+
+==== summary ====
+laps completed: 40  crashed: False  solver failures: 1
+lap times: 15.4 12.8 11.9 11.1 10.5 10.0 9.6 9.2 8.9 8.7 8.4 8.2 8.0 7.8 7.6 7.5 7.4 7.3 7.1 7.0 6.9 6.9 6.7 6.7 6.6 6.5 6.4 6.4 6.3 6.3 6.2 6.1 6.1 6.0 6.0 5.9 5.9 5.8 5.8 5.8
+first: 15.45s  best: 5.80s
+wall time: 32.0s, lap log: ../online_training/data/barc_known_40/laps_20260717_105554.csv

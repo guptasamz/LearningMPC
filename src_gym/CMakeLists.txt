@@ -22,6 +22,7 @@ pybind11_add_module(lmpc_core cpp/lmpc_core.cpp)
 target_include_directories(lmpc_core PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/cpp/ros_shim      # ROS/boost stand-ins (searched first)
   ${CMAKE_CURRENT_SOURCE_DIR}/../include        # original LearningMPC headers, unmodified
+  ${CMAKE_CURRENT_SOURCE_DIR}/../online_training/cpp  # residual dynamics regressor
 )
 
 target_link_libraries(lmpc_core PRIVATE OsqpEigen::OsqpEigen osqp::osqp Eigen3::Eigen)

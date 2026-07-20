@@ -86,6 +86,11 @@ def main():
                     help="path-follower cruise speed [m/s]; lower it for low mu")
     ap.add_argument("--out-ss", default=None,
                     help="output csv path override (default: map folder)")
+    ap.add_argument("--out-dyn", default=None,
+                    help="also write one-step dynamics pairs "
+                         "(vx,vy,yawdot,accel,steer,vx1,vy1,yawdot1) for "
+                         "warm-starting the residual regression (paper: a few "
+                         "slow pure-pursuit laps seed the error model)")
     args = ap.parse_args()
     V_TARGET = args.v_target
 
@@ -144,9 +149,13 @@ def main():
 
     t, lap, s_prev = 0, 0, s_of(sx, sy)
     sim_time, max_time = 0.0, 60.0 + args.laps * length / V_TARGET * 2.5
+    dyn_rows, prev_dyn = [], None   # (vx, vy, yawdot, accel, steer) of step k
+    DYN_V_GATE = 0.3                # skip standstill/launch transients
     while True:
         st = env.sim.agents[0].state
         x, y, v, yaw = st[0], st[1], st[3], st[4]
+        yawdot, slip = st[5], st[6]
+        vx, vy = v * math.cos(slip), v * math.sin(slip)
         s_curr = s_of(x, y)
 
         # lap crossing: same wrap test as the C++ recorder
@@ -172,6 +181,14 @@ def main():
                          f"{accel:.6f}", f"{steer:.6f}", f"{s_curr:.6f}"])
         t += 1
 
+        # one-step dynamics pair: (state_k, action_k) -> state_{k+1}
+        if args.out_dyn:
+            if prev_dyn is not None and \
+               math.hypot(prev_dyn[0], prev_dyn[1]) > DYN_V_GATE and \
+               math.hypot(vx, vy) > DYN_V_GATE:
+                dyn_rows.append(list(prev_dyn) + [vx, vy, yawdot])
+            prev_dyn = (vx, vy, yawdot, accel, steer)
+
         action = np.array([[steer, accel]])
         for _ in range(STEPS):
             obs, _, _, _ = env.step(action)
@@ -185,6 +202,12 @@ def main():
     fout.close()
     print(f"wrote {wp_out}")
     print(f"wrote {ss_out} ({lap} laps, {sim_time:.1f} s sim)")
+    if args.out_dyn:
+        with open(args.out_dyn, "w", newline="") as f:
+            w = csv.writer(f)
+            for r in dyn_rows:
+                w.writerow([f"{v_:.6f}" for v_ in r])
+        print(f"wrote {args.out_dyn} ({len(dyn_rows)} dynamics pairs)")
 
 
 if __name__ == "__main__":
