@@ -1,0 +1,14 @@
+.git
+.venv
+__pycache__/
+*.egg-info/
+*.pyc
+media/
+src_gym/build/
+src_gym/deps/
+src_gym/*.so
+src_gym/results/
+src_gym/results_*
+online_training/cpp/build
+online_training/results/
+online_training/*.so

@@ -42,7 +42,7 @@ target_include_directories(lmpc_node PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../online_training/cpp     # residual dynamics regressor
 )
 
-target_link_libraries(lmpc_node PRIVATE
+target_link_libraries(lmpc_node
   OsqpEigen::OsqpEigen
   osqp::osqp
   Eigen3::Eigen

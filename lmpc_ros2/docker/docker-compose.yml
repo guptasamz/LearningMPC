@@ -1,0 +1,34 @@
+name: learningmpc
+
+services:
+  sim:
+    build:
+      context: ../..
+      dockerfile: lmpc_ros2/docker/Dockerfile
+    image: learningmpc-ros2:humble
+    environment:
+      - ROS_DOMAIN_ID=42
+      - DISPLAY=${DISPLAY}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    # Optional: drop this block if you don't need GPU-accelerated rviz2
+    # rendering (rviz2 falls back to software rendering without it).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: ["ros2", "launch", "f1tenth_gym_ros", "gym_bridge_launch.py"]
+
+  lmpc:
+    build:
+      context: ../..
+      dockerfile: lmpc_ros2/docker/Dockerfile
+    image: learningmpc-ros2:humble
+    environment:
+      - ROS_DOMAIN_ID=42
+    depends_on:
+      - sim
+    command: ["ros2", "launch", "lmpc_ros2", "lmpc.launch.py"]

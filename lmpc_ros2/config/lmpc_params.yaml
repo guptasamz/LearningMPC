@@ -13,9 +13,9 @@ lmpc_node:
     map_topic: "/map"
 
     # -- controller (verbatim from Lmpc_params.yaml) --
-    N: 25
+    N: 25.0
     Ts: 0.05
-    K_NEAR: 16
+    K_NEAR: 16.0
     SPEED_MAX: 10.00
     STEER_MAX: 0.41
     ACCELERATION_MAX: 9.51
@@ -29,7 +29,7 @@ lmpc_node:
     r_d_steer: 0.1
     q_s: 3000.0
     q_s_terminal: 800.0
-    osqp_max_iter: 20000
+    osqp_max_iter: 20000.0
     osqp_time_limit: 0.03
     wheelbase: 0.3302
     friction_coeff: 1.2
@@ -42,7 +42,7 @@ lmpc_node:
     moment_inertia: 0.0398378
     # 0 = original known-dynamics model; 1 = kinematic nominal + online
     # residual regression (online_training/) -- see README.md.
-    dynamics_model: 0
+    dynamics_model: 0.0
 
     # -- output clamp for the open-loop accel->speed integration --
     v_min: -5.0
