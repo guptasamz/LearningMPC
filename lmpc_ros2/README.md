@@ -148,16 +148,38 @@ colcon build --packages-select lmpc_ros2
 source install/setup.bash
 ```
 
-**Before deploying**, after a clean sim pass (Section 4):
-1. Point `pose_topic` at your real localization topic — confirm the name (`ros2 topic list`).
+**Before running anything below**, after a clean sim pass (Section 4):
+1. Confirm your real localization topic's name (`ros2 topic list`) — used as `pose_topic` below.
 2. Node reads `twist.linear.{x,y}` as body velocity, `twist.angular.z` as yaw rate — if your
    source only gives `vx`, `vy` reads near-zero (an approximation, not a guarantee).
-3. Point `map_topic`/`track_dir` at your venue, not `barc_oval`.
-4. **No `_initial_safe_set.csv` for this venue?** Stop and do Section 3 first — not optional.
-5. Bench test first (wheels off the ground) for both nodes — confirm `/drive` looks sane.
-6. `drive.speed` carries a raw commanded **acceleration**, published directly — matching this
-   project's vendored/patched `f1tenth_gym` (`base_classes.py`'s `RaceCar::update_pose()` treats
-   the field that way, not as a target velocity). Confirm your VESC/ackermann bridge expects an
-   acceleration in that field, not a target speed — if it wants the latter, that's a small change
-   in `control_tick()` (`src/lmpc_node.cpp`), not the reverse.
-7. Have a physical e-stop within reach — this package provides none.
+3. Confirm what publishes `map_topic` (transient-local `OccupancyGrid`) on your car — a
+   map_server/localization node, not anything this package provides. Must already be running
+   before either command below.
+4. Have a physical e-stop within reach — this package provides none.
+
+**1. Seed a safe set for your venue**, if you don't already have one (same requirement as
+Section 3 — needs `<track_dir>/<track_name>_centerline.csv` already present):
+```bash
+ros2 launch lmpc_ros2 pure_pursuit.launch.py \
+  pose_topic:=/pf/pose/odom \
+  track_dir:=/path/to/venue track_name:=venue \
+  max_speed:=1.0
+```
+Bench test first (wheels off the ground) — this node drives the car. `max_speed` has no
+node-level default; set it explicitly and keep it low. Wait for `"wrote ... -- shutting down"`
+in the log before moving on.
+
+**2. Run the controller:**
+```bash
+ros2 launch lmpc_ros2 lmpc.launch.py \
+  pose_topic:=/pf/pose/odom map_topic:=/map \
+  track_dir:=/path/to/venue track_name:=venue
+```
+Bench test this one too before an actual track run — confirm `/drive` looks physically sane
+(`ros2 topic echo /drive`) with the wheels off the ground first.
+
+`drive.speed` carries a raw commanded **acceleration**, published directly — matching this
+project's vendored/patched `f1tenth_gym` (`base_classes.py`'s `RaceCar::update_pose()` treats the
+field that way, not as a target velocity). Confirm your VESC/ackermann bridge expects an
+acceleration in that field, not a target speed — if it wants the latter, that's a small change in
+`control_tick()` (`src/lmpc_node.cpp`), not the reverse.
