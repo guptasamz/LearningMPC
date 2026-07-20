@@ -77,7 +77,7 @@ std::vector<std::pair<double, double>> load_centerline(const std::string &path) 
 //      drop a single message before it's actually sent).
 constexpr double kStopVelThresh = 0.05;      // m/s
 constexpr int kStopSafetyTicks = 100;        // ~5s fallback if v_ never converges
-constexpr int kConfirmedStopTicks = 20;      // ~1s at the default 0.05s control_dt_
+constexpr int kConfirmedStopTicks = 40;      // ~1s at the default 0.025s control_dt_
 
 }  // namespace
 
@@ -95,7 +95,7 @@ PurePursuitNode::PurePursuitNode() : rclcpp::Node("pure_pursuit_node") {
   accel_limit_ = this->declare_parameter<double>("accel_limit", 2.0);
   steer_limit_ = this->declare_parameter<double>("steer_limit", 0.41);
   waypoint_spacing_ = this->declare_parameter<double>("waypoint_spacing", 0.05);
-  control_dt_ = this->declare_parameter<double>("control_dt", 0.05);
+  control_dt_ = this->declare_parameter<double>("control_dt", 0.025);
 
   if (centerline_csv.empty() || output_csv_.empty()) {
     throw std::runtime_error(

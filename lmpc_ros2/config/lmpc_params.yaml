@@ -9,18 +9,25 @@
 # not one shared across the ROS1/gym and ROS2 boundary.
 lmpc_node:
   ros__parameters:
-    N: 25.0
-    Ts: 0.05
+    # N*Ts=1.25s horizon -- matches f1tenth_gym_jl's HORIZON_STEPS=50 at its
+    # own dt=0.025 (same track, barc_oval). Larger QP than N=25 though --
+    # re-verify the 25ms Ts budget once ROS2 is available to test with.
+    N: 50.0
+    Ts: 0.025
     K_NEAR: 16.0
     SPEED_MAX: 10.00
-    STEER_MAX: 0.41
+    # 0.4189 matches f1tenth_gym_jl's DELTA_MAX exactly (was 0.41).
+    STEER_MAX: 0.4189
     ACCELERATION_MAX: 9.51
     DECELERATION_MAX: 9.51
     VEL_THRESHOLD: 0.8
     MAP_MARGIN: 0.45
     WAYPOINT_SPACE: 0.2
-    r_accel: 1.5
-    r_steer: 18.0
+    # Matches f1tenth_gym_jl's R_ACCEL/R_STEER for barc_oval at this same
+    # N/Ts -- tuned as a set together with the horizon/timestep above, so
+    # ported together rather than left at the old N=25/Ts=0.05-era values.
+    r_accel: 18.0
+    r_steer: 5.0
     r_d_accel: 0.1
     r_d_steer: 0.1
     q_s: 3000.0
@@ -28,14 +35,21 @@ lmpc_node:
     osqp_max_iter: 20000.0
     osqp_time_limit: 0.03
     wheelbase: 0.3302
-    friction_coeff: 1.2
-    height_cg: 0.08255
+    # Per DA_MCTS_new_implementation/params/vehicle_params.yaml (its own
+    # header: "Field names match the f1tenth_gym expected param dict") --
+    # same generic f110_gym simulator defaults f1tenth_gym_jl uses, not an
+    # independent real-car measurement. Was: friction_coeff 1.2, C_S_front/
+    # rear 2.3/2.3, height_cg 0.08255, mass 3.17, moment_inertia 0.0398378
+    # (labeled in ../../Lmpc_params.yaml as actual measurements of car
+    # "lidart").
+    friction_coeff: 1.0489
+    height_cg: 0.074
     l_cg2rear: 0.17145
     l_cg2front: 0.15875
-    C_S_front: 2.3
-    C_S_rear: 2.3
-    mass: 3.17
-    moment_inertia: 0.0398378
+    C_S_front: 4.718
+    C_S_rear: 5.4562
+    mass: 3.74
+    moment_inertia: 0.04712
     # 0 = original known-dynamics model; 1 = kinematic nominal + online
     # residual regression (online_training/) -- see README.md.
     dynamics_model: 0.0
@@ -47,3 +61,8 @@ pure_pursuit_node:
     # Keep this low, especially on the real car. Override for a one-off run
     # with pure_pursuit.launch.py's max_speed:=<value> launch argument.
     max_speed: 1.0
+    # Matches lmpc_node's Ts above -- the recorded safe set's row spacing
+    # must equal lmpc_node's Ts, or LMPCCore's per-step dynamics assumptions
+    # (each row exactly Ts apart) are wrong. Re-run the seed step after
+    # changing either value.
+    control_dt: 0.025

@@ -81,7 +81,7 @@ LmpcNode::LmpcNode() : rclcpp::Node("lmpc_node") {
     controller_params_[name] = this->declare_parameter<double>(name, def);
   };
   declare_num("N", 25);
-  declare_num("Ts", 0.05);
+  declare_num("Ts", 0.025);
   declare_num("K_NEAR", 16);
   declare_num("SPEED_MAX", 10.00);
   declare_num("STEER_MAX", 0.41);

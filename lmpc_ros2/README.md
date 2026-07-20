@@ -108,22 +108,31 @@ bind-mount the edited file for faster iteration).
 
 Params live in `config/lmpc_params.yaml`, self-contained under this package — the **only** file
 to edit for the whole LMPC process, both nodes (`lmpc_node`'s section and `pure_pursuit_node`'s
-section). It's a hand-kept transcription of `../Lmpc_params.yaml` (ROS1/gym's own file, outside
-this package, in a different format `rosparam load`/the gym harness need) — retune both if you
-change one and want them to match; they're intentionally two separate files, not shared across
-that boundary.
+section). It started as a transcription of `../Lmpc_params.yaml` (ROS1/gym's own file, outside
+this package), but `N`, `Ts`, `STEER_MAX`, `r_accel`/`r_steer`, and the vehicle physical params
+now **intentionally diverge** from it — see the next paragraph and the file's own inline
+comments for why. Retune both files by hand if you want a given change to apply to both; they're
+intentionally separate, not shared across that boundary.
 - `r_accel`/`r_steer`/`r_d_accel`/`r_d_steer` — cost weights.
 - `osqp_max_iter`/`osqp_time_limit` — don't shrink `osqp_max_iter` below 20000 (large tracks need
   it). Bound worst-case latency via `osqp_time_limit` instead.
 - `dynamics_model: 1` — kinematic + online residual regression instead of known-dynamics.
 - `max_speed` — `pure_pursuit_node`'s speed cap while seeding (Section 3). Shared across tracks
   unless overridden per-run with `max_speed:=<value>`.
+- Vehicle physical params (`friction_coeff`, `C_S_front`/`rear`, `height_cg`, `mass`,
+  `moment_inertia`) currently match `f1tenth_gym_jl`'s (and `DA_MCTS_new_implementation`'s)
+  generic f110_gym simulator defaults, **not** a real-car measurement — the file this repo
+  originally shipped with (`../Lmpc_params.yaml`) labels its own values as actual measurements of
+  car "lidart". Revisit before trusting the dynamics model on real hardware.
 
 Needs an image rebuild (Section 2) to take effect; re-check timing after any change.
 
-Tuned around `Ts: 0.05`. Dev-machine `barc_oval`: mean ≈4.5ms, max ≈21-31ms (bounded by
-`osqp_time_limit`). Real hardware is likely slower and other tracks solve differently — always
-re-check the overrun log on your actual target before trusting these numbers.
+Tuned around `Ts: 0.025`, `N: 50` (`N * Ts` = 1.25s horizon, matching `f1tenth_gym_jl`'s
+`HORIZON_STEPS=50`/`dt=0.025` on the same `barc_oval` track — deliberately ported together as a
+set, not mixed with the old `N=25`/`Ts=0.05`-era weights). This is a **larger, more expensive QP**
+than what was last measured (`≈4.5ms mean / ≈21-31ms max`, itself from `Ts: 0.05` testing that
+doesn't carry over either) — this exact configuration's timing is unverified. Re-check the
+overrun log (Section 4) before trusting it on any real hardware or track.
 
 ## 6. Real car deployment
 

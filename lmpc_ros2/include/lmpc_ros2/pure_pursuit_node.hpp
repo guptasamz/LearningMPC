@@ -46,7 +46,7 @@ private:
   double accel_limit_ = 2.0;
   double steer_limit_ = 0.41;
   double waypoint_spacing_ = 0.05;
-  double control_dt_ = 0.05;
+  double control_dt_ = 0.025;
 
   // -- densified closed-loop centerline, fixed spacing = waypoint_spacing_ --
   std::vector<double> dense_x_;
