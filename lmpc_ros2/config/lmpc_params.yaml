@@ -1,18 +1,14 @@
-# Transcribed from ../../Lmpc_params.yaml (see that file for the reasoning
-# behind each value, especially osqp_max_iter/osqp_time_limit's comments).
-# waypoint_csv / init_safe_set_csv / reg_warmstart_csv are intentionally NOT
-# set here -- they're install-location-dependent paths, resolved and passed
-# by launch/lmpc.launch.py via ament_index_cpp's package share directory.
+# Self-contained config for the whole lmpc_ros2 process (both nodes) --
+# everything lmpc_node and pure_pursuit_node need lives here, under
+# lmpc_ros2/, not read from or written to anything outside this package.
+#
+# Controller tuning is transcribed from ../../Lmpc_params.yaml (see that
+# file's comments for the reasoning behind each value, especially
+# osqp_max_iter/osqp_time_limit) -- keep the two in sync by hand if you
+# retune the ROS1/gym side too; they're intentionally two separate files,
+# not one shared across the ROS1/gym and ROS2 boundary.
 lmpc_node:
   ros__parameters:
-    # -- topics: defaults match f1tenth_gym_ros's ego-agent convention.
-    # Override pose_topic (e.g. to the real particle filter's output topic)
-    # via launch argument when moving to the real car -- see README.md.
-    pose_topic: "/ego_racecar/odom"
-    drive_topic: "/drive"
-    map_topic: "/map"
-
-    # -- controller (verbatim from Lmpc_params.yaml) --
     N: 25.0
     Ts: 0.05
     K_NEAR: 16.0
@@ -43,7 +39,14 @@ lmpc_node:
     # 0 = original known-dynamics model; 1 = kinematic nominal + online
     # residual regression (online_training/) -- see README.md.
     dynamics_model: 0.0
-
-    # -- output clamp for the open-loop accel->speed integration --
+    # output clamp for the open-loop accel->speed integration
     v_min: -5.0
     v_max: 20.0
+
+pure_pursuit_node:
+  ros__parameters:
+    # Speed cap (m/s) while (re)generating a track's initial safe set
+    # (README.md Section 3) -- required at the node level (throws if <= 0).
+    # Keep this low, especially on the real car. Override for a one-off run
+    # with pure_pursuit.launch.py's max_speed:=<value> launch argument.
+    max_speed: 1.0

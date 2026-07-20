@@ -71,7 +71,7 @@ LmpcNode::LmpcNode() : rclcpp::Node("lmpc_node") {
   if (waypoint_csv_.empty() || init_safe_set_csv_.empty()) {
     throw std::runtime_error(
         "lmpc_ros2: waypoint_csv and init_safe_set_csv params are required "
-        "(see config/lmpc_params.yaml / launch/lmpc.launch.py)");
+        "(see launch/lmpc.launch.py's track_dir/track_name arguments)");
   }
 
   // -- controller params, forwarded verbatim into LMPCCore::getParameters --

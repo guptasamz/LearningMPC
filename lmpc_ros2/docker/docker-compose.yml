@@ -31,4 +31,26 @@ services:
       - ROS_DOMAIN_ID=42
     depends_on:
       - sim
+    # No track_name override -- lmpc.launch.py's own default is barc_oval.
+    # For a different track: `run --rm lmpc ros2 launch lmpc_ros2
+    # lmpc.launch.py track_name:=... track_dir:=...` (README.md Section 4).
     command: ["ros2", "launch", "lmpc_ros2", "lmpc.launch.py"]
+
+  # Generates a fresh initial safe set (README.md Section 3) -- NOT started
+  # by plain `up`: it drives the car itself and would fight `lmpc` for
+  # /drive if it launched automatically alongside it every time. Opt-in via
+  # the "seed" profile:
+  #   docker compose -f lmpc_ros2/docker/docker-compose.yml --profile seed run --rm seed
+  # Same no-override reasoning as `lmpc` above -- pure_pursuit.launch.py's
+  # own default is barc_oval, whose data/max_speed are bundled/set already.
+  seed:
+    build:
+      context: ../..
+      dockerfile: lmpc_ros2/docker/Dockerfile
+    image: learningmpc-ros2:humble
+    environment:
+      - ROS_DOMAIN_ID=42
+    depends_on:
+      - sim
+    profiles: ["seed"]
+    command: ["ros2", "launch", "lmpc_ros2", "pure_pursuit.launch.py"]

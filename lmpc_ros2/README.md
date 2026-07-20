@@ -28,6 +28,13 @@ differ. **Docker required except Section 6 (real car).**
 Everything else (ROS2 Humble, `f1tenth_gym_ros` built from source against Humble, Eigen/OSQP/
 osqp-eigen) is built into the image.
 
+All config for the whole LMPC process — controller tuning *and* `pure_pursuit_node`'s
+`max_speed` — lives in one file, self-contained under this package: `config/lmpc_params.yaml`
+(Section 5). No separate env-file layer. It's a hand-kept transcription of `../Lmpc_params.yaml`
+(ROS1/gym's own file, outside this package) — see its header comment. `max_speed` is currently
+one shared value, not per-track — override it for a one-off run with `max_speed:=<value>`
+(Section 3) if a different track needs a different cap.
+
 ## 2. Build
 
 From the **repo root**:
@@ -44,24 +51,28 @@ already included; go straight to Section 4. Needed for any other track.
 
 `lmpc_node` needs an `_initial_safe_set.csv` for its track before it can run at all.
 `pure_pursuit_node` produces one: drives a `_centerline.csv` via pure pursuit + a capped-speed
-P-controller, records the CSV `LMPCCore` reads, exits after `laps` laps (default 2).
+P-controller, records the CSV `LMPCCore` reads, exits after `laps` laps (default 2). Its speed
+cap comes from `config/lmpc_params.yaml`'s `max_speed` — **required at the node level** (throws
+if `<= 0`).
 
+Reseed the bundled `barc_oval` track — a `seed` compose service does this directly:
 ```bash
-docker compose -f lmpc_ros2/docker/docker-compose.yml run --rm lmpc \
-  ros2 launch lmpc_ros2 pure_pursuit.launch.py \
-  track_dir:=/path/to/dir track_name:=my_track max_speed:=2.0
+docker compose -f lmpc_ros2/docker/docker-compose.yml --profile seed run --rm seed
 ```
+Not started by plain `up` (Section 4) — it drives the car itself and would fight `lmpc` for
+`/drive` if it launched automatically every time, hence the `--profile seed` opt-in.
 
-`max_speed` is **required, no default** (throws if `<= 0`) — it's both the P-controller's target
-and a hard clamp on published speed. Keep it low on a new track or the real car.
+**New track:** needs its own `_centerline.csv` (Section 3 above) and, if it needs a different
+speed cap than `config/lmpc_params.yaml`'s shared `max_speed`, pass `max_speed:=<value>` explicitly.
+Point `track_name:=...` (and `track_dir:=...` if it's not bundled in this package's own `data/`)
+at it — e.g. `docker compose ... run --rm seed ros2 launch lmpc_ros2 pure_pursuit.launch.py
+track_name:=my_track max_speed:=1.5` (bind-mount the directory too if external, same pattern as
+Section 4).
 
-Needs `<track_dir>/<track_name>_centerline.csv` already present (see
-`data/barc_oval/barc_oval_centerline.csv` for the format) — this repo has no tool to generate one
-from a map, produce it externally. Writes `<track_dir>/<track_name>_initial_safe_set.csv`, the
-same path `lmpc.launch.py` reads — so: run this, wait for `"wrote ... -- shutting down"` in the
-log, then run Section 4's command with the same `track_dir`/`track_name`.
+The node writes `<track_dir>/<track_name>_initial_safe_set.csv`, the same path `lmpc.launch.py`
+reads — so: run this, wait for `"wrote ... -- shutting down"` in the log, then run Section 4.
 
-Real car: same command with `pose_topic:=/pf/pose/odom` (or your localization topic) — read
+Real car: same commands with `pose_topic:=/pf/pose/odom` (or your localization topic) — read
 Section 6 first, the bench-test-before-track-test rule applies here too.
 
 ## 4. Run
@@ -73,13 +84,15 @@ Two containers: **`sim`** (`f1tenth_gym_ros` — sim, rviz2, map_server; publish
 `/ego_racecar/odom`, `/map`) and **`lmpc`** (`lmpc_node`, track `barc_oval`; publishes `/drive`).
 Background: `up -d` then `logs -f`. Stop: `down`.
 
-Different track:
+Different track (bind-mount its host directory in — not otherwise visible inside the container):
 ```bash
-docker compose -f lmpc_ros2/docker/docker-compose.yml run --rm lmpc \
-  ros2 launch lmpc_ros2 lmpc.launch.py track_dir:=/path/to/dir track_name:=my_track
+docker compose -f lmpc_ros2/docker/docker-compose.yml \
+  run --rm -v /host/path/to/dir:/host/path/to/dir lmpc \
+  ros2 launch lmpc_ros2 lmpc.launch.py \
+  track_dir:=/host/path/to/dir track_name:=my_track
 ```
-Needs `<track_name>_waypoints.csv`/`<track_name>_initial_safe_set.csv` in `track_dir` (no safe
-set yet? see Section 3).
+Needs `<track_name>_waypoints.csv`/`<track_name>_initial_safe_set.csv` in that directory (no safe
+set yet? see Section 3, same bind-mount pattern).
 
 **Verify:** `ros2 topic hz /drive` → ~20Hz with changing values. In the `lmpc` logs:
 - `"LMPCCore initialized ..."` — controller is up. Missing → check `/map` durability.
@@ -93,11 +106,18 @@ bind-mount the edited file for faster iteration).
 
 ## 5. Tuning
 
-Params in `config/lmpc_params.yaml` (mirrors `../Lmpc_params.yaml`):
+Params live in `config/lmpc_params.yaml`, self-contained under this package — the **only** file
+to edit for the whole LMPC process, both nodes (`lmpc_node`'s section and `pure_pursuit_node`'s
+section). It's a hand-kept transcription of `../Lmpc_params.yaml` (ROS1/gym's own file, outside
+this package, in a different format `rosparam load`/the gym harness need) — retune both if you
+change one and want them to match; they're intentionally two separate files, not shared across
+that boundary.
 - `r_accel`/`r_steer`/`r_d_accel`/`r_d_steer` — cost weights.
 - `osqp_max_iter`/`osqp_time_limit` — don't shrink `osqp_max_iter` below 20000 (large tracks need
   it). Bound worst-case latency via `osqp_time_limit` instead.
 - `dynamics_model: 1` — kinematic + online residual regression instead of known-dynamics.
+- `max_speed` — `pure_pursuit_node`'s speed cap while seeding (Section 3). Shared across tracks
+  unless overridden per-run with `max_speed:=<value>`.
 
 Needs an image rebuild (Section 2) to take effect; re-check timing after any change.
 
@@ -110,8 +130,8 @@ re-check the overrun log on your actual target before trusting these numbers.
 Docker not required — build natively on the car's compute.
 
 **Prerequisites:** ROS2 + `colcon`, `rclcpp nav_msgs ackermann_msgs ament_index_cpp launch
-launch_ros`, Eigen 3.4/OSQP v0.6.3/osqp-eigen v0.8.1 in `../src_gym/deps/` (`../src_gym/build.sh`
-— only the C++ deps are needed, not its pybind/venv step).
+launch_ros`, Eigen 3.4/OSQP v0.6.3/osqp-eigen v0.8.1 in `../src_gym/deps/`
+(`../src_gym/build.sh` — only the C++ deps are needed, not its pybind/venv step).
 
 **Build:**
 ```bash
