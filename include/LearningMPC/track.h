@@ -144,31 +144,41 @@ public:
             double dy_dtheta = y_eval_d(centerline_points[i].theta);
             Vector2d p(centerline_points[i].x, centerline_points[i].y);
 
+            // Bounded search: not every map has a wall within reach of every
+            // centerline point (e.g. an open room scan, unlike a purpose-built
+            // track) -- an unbounded search here can walk clean off the map,
+            // and occupancy_grid::xy_ind2ind CLAMPS out-of-range indices
+            // instead of erroring, so an unbounded loop would never terminate
+            // in that case. Cap at HALF_WIDTH_MAX and fall back to it (the
+            // pre-existing default half-width) if no wall is found in range.
+            int max_t = static_cast<int>(ceil(HALF_WIDTH_MAX/map.info.resolution));
+
             //search right until hit right track boundary
-            while(true){
+            bool found_right = false;
+            for (t=0; t<=max_t; t++){
                 double x = (p + t*map.info.resolution*Vector2d(dy_dtheta, -dx_dtheta).normalized())(0);
                 double y = (p + t*map.info.resolution*Vector2d(dy_dtheta, -dx_dtheta).normalized())(1);
                 if(occupancy_grid::is_xy_occupied(map, x, y)){
                     p_right(0) = x;
                     p_right(1) = y;
+                    found_right = true;
                     break;
                 }
-                t++;
             }
-            t=0;
-            //search left until hit right track boundary
-            while(true){
+            //search left until hit left track boundary
+            bool found_left = false;
+            for (t=0; t<=max_t; t++){
                 double x = (p + t*map.info.resolution*Vector2d(-dy_dtheta, dx_dtheta).normalized())(0);
                 double y = (p + t*map.info.resolution*Vector2d(-dy_dtheta, dx_dtheta).normalized())(1);
                 if(occupancy_grid::is_xy_occupied(map, x, y)){
                     p_left(0) = x;
                     p_left(1) = y;
+                    found_left = true;
                     break;
                 }
-                t++;
             }
-            centerline_points[i].left_half_width = (p_left-p).norm();
-            centerline_points[i].right_half_width = (p_right-p).norm();
+            centerline_points[i].left_half_width = found_left ? (p_left-p).norm() : HALF_WIDTH_MAX;
+            centerline_points[i].right_half_width = found_right ? (p_right-p).norm() : HALF_WIDTH_MAX;
         }
     }
 
