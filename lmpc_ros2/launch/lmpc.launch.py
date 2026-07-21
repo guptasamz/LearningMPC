@@ -1,7 +1,7 @@
 """Launch lmpc_node against either f1tenth_gym_ros or the real car -- the
 node itself has no sim/real branches; only pose_topic/drive_topic differ.
 
-Sim (default, bundled barc_oval):
+Sim (default, bundled gold_conference_room):
     ros2 launch lmpc_ros2 lmpc.launch.py
 
 Other track (needs <track_dir>/<track_name>_waypoints.csv and
@@ -40,7 +40,7 @@ def launch_setup(context, *args, **kwargs):
     if not track_dir:
         # NOT a static default -- must be resolved after track_name is known,
         # or overriding track_name alone would silently keep looking in
-        # barc_oval's directory for a different track's files.
+        # gold_conference_room's directory for a different track's files.
         track_dir = os.path.join(pkg_share, "data", track_name)
 
     lmpc_node = Node(
@@ -85,7 +85,7 @@ def generate_launch_description():
                      "share directory.",
     )
     track_name_arg = DeclareLaunchArgument(
-        "track_name", default_value="barc_oval",
+        "track_name", default_value="gold_conference_room",
         description="File prefix within track_dir -- must match track_dir's "
                      "own track when overriding both (e.g. pure_pursuit_node's "
                      "output_csv uses the same convention, see "

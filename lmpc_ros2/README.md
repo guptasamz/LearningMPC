@@ -46,8 +46,10 @@ onward, since the build context is the whole repo.
 
 ## 3. Generating a fresh initial safe set for a new track
 
-**Skip this section if you're just running the bundled `barc_oval` demo** — its safe set is
-already included; go straight to Section 4. Needed for any other track.
+**Required before Section 4** — the bundled `gold_conference_room` track ships a centerline but
+no safe set yet; `lmpc_node` throws on startup without one. Seed it once (below), then move to
+Section 4. Skip only if you've already seeded a `<track_dir>/<track_name>_initial_safe_set.csv`
+for the track you're about to run.
 
 `lmpc_node` needs an `_initial_safe_set.csv` for its track before it can run at all.
 `pure_pursuit_node` produces one: drives a `_centerline.csv` via pure pursuit + a capped-speed
@@ -55,7 +57,7 @@ P-controller, records the CSV `LMPCCore` reads, exits after `laps` laps (default
 cap comes from `config/lmpc_params.yaml`'s `max_speed` — **required at the node level** (throws
 if `<= 0`).
 
-Reseed the bundled `barc_oval` track — a `seed` compose service does this directly:
+Seed the bundled `gold_conference_room` track — a `seed` compose service does this directly:
 ```bash
 docker compose -f lmpc_ros2/docker/docker-compose.yml --profile seed run --rm seed
 ```
@@ -81,7 +83,8 @@ Section 6 first, the bench-test-before-track-test rule applies here too.
 docker compose -f lmpc_ros2/docker/docker-compose.yml up
 ```
 Two containers: **`sim`** (`f1tenth_gym_ros` — sim, rviz2, map_server; publishes
-`/ego_racecar/odom`, `/map`) and **`lmpc`** (`lmpc_node`, track `barc_oval`; publishes `/drive`).
+`/ego_racecar/odom`, `/map`) and **`lmpc`** (`lmpc_node`, track `gold_conference_room`; publishes
+`/drive`).
 Background: `up -d` then `logs -f`. Stop: `down`.
 
 Different track (bind-mount its host directory in — not otherwise visible inside the container):
@@ -99,10 +102,14 @@ set yet? see Section 3, same bind-mount pattern).
 - `"control step took ... over Ts budget"` — occasional is fine, frequent → re-tune (Section 5).
 - `"QP solve failed ..."` — fallback firing; frequent → track/map mismatch.
 
-**Default mismatch:** `f1tenth_gym_ros` defaults to its own Levine map; `lmpc_ros2` defaults to
-`barc_oval` — expect QP warnings out of the box. Fix: point `f1tenth_gym_ros/config/sim.yaml`'s
-`map_path` at `data/barc_oval/barc_oval_map` (no `.png`), `sx/sy/stheta: 0.0`, rebuild (or
-bind-mount the edited file for faster iteration).
+**Default mismatch, already handled:** upstream `f1tenth_gym_ros` defaults to its own Levine map;
+`lmpc_ros2` defaults to `gold_conference_room` — left alone, that's a QP-infeasible mismatch out of
+the box. The Dockerfile (Section 2's build) already patches `f1tenth_gym_ros/config/sim.yaml`'s
+`map_path` and `sx`/`sy`/`stheta` to `gold_conference_room`'s own map and start pose at image-build
+time, so this isn't something you do by hand for the default track. Only relevant if you point
+`track_name`/`track_dir` at a *different* track (the bind-mount example above): make the same edit
+yourself — `map_path`/`sx`/`sy`/`stheta` to that track's own map/start pose, then rebuild (or
+bind-mount an edited `sim.yaml` for faster iteration).
 
 ## 5. Tuning
 
@@ -139,14 +146,25 @@ overrun log (Section 4) before trusting it on any real hardware or track.
 Docker not required — build natively on the car's compute.
 
 **Prerequisites:** ROS2 + `colcon`, `rclcpp nav_msgs ackermann_msgs ament_index_cpp launch
-launch_ros`, Eigen 3.4/OSQP v0.6.3/osqp-eigen v0.8.1 in `../src_gym/deps/`
-(`../src_gym/build.sh` — only the C++ deps are needed, not its pybind/venv step).
+launch_ros`.
 
-**Build:**
-```bash
-colcon build --packages-select lmpc_ros2
-source install/setup.bash
-```
+**Build — two steps, in order. Skipping step 1 is the most common failure here**
+(`CMake Error ... Could not find a package configuration file provided by "osqp"`):
+
+1. Build Eigen 3.4/OSQP v0.6.3/osqp-eigen v0.8.1 into `../src_gym/deps/` — `lmpc_ros2/CMakeLists.txt`
+   looks for them there via `CMAKE_PREFIX_PATH` and won't configure without them:
+   ```bash
+   cd ../src_gym && ./build.sh && cd -
+   ```
+   This also builds a Python module (`lmpc_core`) this package doesn't need — that's fine, ignore
+   it; if `build.sh` errors out on that *last* step specifically (e.g. no `.venv`/pybind11
+   available), the Eigen/OSQP/osqp-eigen deps it needed to build first are already done and
+   `lmpc_ros2` will still find them.
+2. Now build this package:
+   ```bash
+   colcon build --packages-select lmpc_ros2
+   source install/setup.bash
+   ```
 
 **Before running anything below**, after a clean sim pass (Section 4):
 1. Confirm your real localization topic's name (`ros2 topic list`) — used as `pose_topic` below.

@@ -31,9 +31,18 @@ services:
       - ROS_DOMAIN_ID=42
     depends_on:
       - sim
-    # No track_name override -- lmpc.launch.py's own default is barc_oval.
-    # For a different track: `run --rm lmpc ros2 launch lmpc_ros2
-    # lmpc.launch.py track_name:=... track_dir:=...` (README.md Section 4).
+    # No track_name override -- lmpc.launch.py's own default is
+    # gold_conference_room. For a different track: `run --rm lmpc ros2
+    # launch lmpc_ros2 lmpc.launch.py track_name:=... track_dir:=...`
+    # (README.md Section 4).
+    #
+    # Bind-mounted so this container sees the initial_safe_set.csv the
+    # `seed` service (below) writes -- without this, `seed` and `lmpc` are
+    # separate --rm containers from the same image and never share a
+    # filesystem, so `seed`'s write would otherwise vanish before `lmpc`
+    # could read it.
+    volumes:
+      - ../data:/ws/src/LearningMPC/lmpc_ros2/data
     command: ["ros2", "launch", "lmpc_ros2", "lmpc.launch.py"]
 
   # Generates a fresh initial safe set (README.md Section 3) -- NOT started
@@ -42,7 +51,9 @@ services:
   # the "seed" profile:
   #   docker compose -f lmpc_ros2/docker/docker-compose.yml --profile seed run --rm seed
   # Same no-override reasoning as `lmpc` above -- pure_pursuit.launch.py's
-  # own default is barc_oval, whose data/max_speed are bundled/set already.
+  # own default is gold_conference_room, which has no bundled safe set (only
+  # a centerline) -- this MUST be run at least once before `lmpc` (above)
+  # can start against the default track.
   seed:
     build:
       context: ../..
@@ -53,4 +64,9 @@ services:
     depends_on:
       - sim
     profiles: ["seed"]
+    # Bind-mounted for the same reason as `lmpc` above -- this is the write
+    # side: without it, the CSV this writes is lost the moment the
+    # container exits (`run --rm`), never reaching `lmpc`'s container.
+    volumes:
+      - ../data:/ws/src/LearningMPC/lmpc_ros2/data
     command: ["ros2", "launch", "lmpc_ros2", "pure_pursuit.launch.py"]

@@ -42,15 +42,22 @@ RUN git clone --depth 1 https://github.com/f1tenth/f1tenth_gym_ros.git \
 # rather than patching their config.
 RUN mkdir -p /sim_ws/src && ln -s /ws/src/f1tenth_gym_ros /sim_ws/src/f1tenth_gym_ros
 
-# Default the sim to lmpc_ros2's own barc_oval track instead of upstream's
-# bundled Levine map -- Levine has no relation to the waypoints/safe-set
-# lmpc_ros2 is actually driving, which makes every default run QP-infeasible.
-# barc_oval's start pose is already ~(0,0,0), matching sim.yaml's existing
-# sx/sy/stheta defaults, so only map_path needs to change.
-RUN cp /ws/src/LearningMPC/lmpc_ros2/data/barc_oval/barc_oval_map.png \
-       /ws/src/LearningMPC/lmpc_ros2/data/barc_oval/barc_oval_map.yaml \
+# Default the sim to lmpc_ros2's own gold_conference_room track instead of
+# upstream's bundled Levine map -- Levine has no relation to the waypoints/
+# safe-set lmpc_ros2 is actually driving, which makes every default run
+# QP-infeasible. Unlike barc_oval (start pose ~(0,0,0), matching sim.yaml's
+# own sx/sy/stheta defaults), gold_conference_room's centerline starts at
+# roughly (-3.396, -11.568, 1.774 rad) -- sx/sy/stheta must be patched too,
+# not just map_path.
+RUN cp /ws/src/LearningMPC/lmpc_ros2/data/gold_conference_room/gold_conference_room_map.png \
+       /ws/src/LearningMPC/lmpc_ros2/data/gold_conference_room/gold_conference_room_map.yaml \
        /ws/src/f1tenth_gym_ros/maps/ && \
-    sed -i "s#maps/levine#maps/barc_oval_map#" /ws/src/f1tenth_gym_ros/config/sim.yaml
+    sed -i \
+      -e "s#maps/levine#maps/gold_conference_room_map#" \
+      -e "s/^\(\s*sx:\s*\).*/\1-3.3957536/" \
+      -e "s/^\(\s*sy:\s*\).*/\1-11.567745/" \
+      -e "s/^\(\s*stheta:\s*\).*/\11.773677/" \
+      /ws/src/f1tenth_gym_ros/config/sim.yaml
 
 # Eigen 3.4.0 / OSQP v0.6.3 / osqp-eigen v0.8.1 into src_gym/deps, same
 # versions and steps as src_gym/build.sh's dependency stage -- lmpc_ros2's

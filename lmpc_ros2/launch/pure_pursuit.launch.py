@@ -3,7 +3,7 @@ CSV for lmpc_node -- run this FIRST for any new track, then lmpc.launch.py
 against the same track_dir/track_name. No sim/real branching, same as
 lmpc.launch.py -- only pose_topic/drive_topic differ.
 
-Sim, default (bundled barc_oval) track:
+Sim, default (bundled gold_conference_room) track:
     ros2 launch lmpc_ros2 pure_pursuit.launch.py
 
 New track (needs <track_dir>/<track_name>_centerline.csv already present --
@@ -81,7 +81,7 @@ def generate_launch_description():
                      "data/<track_name>/ share directory.",
     )
     track_name_arg = DeclareLaunchArgument(
-        "track_name", default_value="barc_oval",
+        "track_name", default_value="gold_conference_room",
         description="File prefix within track_dir (same convention as lmpc.launch.py)",
     )
     max_speed_arg = DeclareLaunchArgument(
