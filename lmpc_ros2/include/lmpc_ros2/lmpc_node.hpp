@@ -44,6 +44,7 @@ private:
   std::string waypoint_csv_;
   std::string init_safe_set_csv_;
   std::string reg_warmstart_csv_;
+  std::string halfwidth_csv_;
   double Ts_ = 0.025;
 
   // -- live state, updated by odom_callback, consumed by control_tick --

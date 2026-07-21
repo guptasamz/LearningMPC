@@ -51,6 +51,11 @@ def launch_setup(context, *args, **kwargs):
         "init_safe_set_csv": os.path.join(
             track_dir, f"{track_name}_initial_safe_set.csv"
         ),
+        # Same file pure_pursuit_node reads as its driving reference. Passed
+        # unconditionally -- LMPCCore::apply_csv_halfwidths degrades
+        # gracefully (falls back to pure ray-marching) if this is missing or
+        # lacks width columns, so this is safe for every track.
+        "halfwidth_csv": os.path.join(track_dir, f"{track_name}_centerline.csv"),
     }
     half_width_max_override = LaunchConfiguration("track_half_width_max").perform(context)
     if half_width_max_override:

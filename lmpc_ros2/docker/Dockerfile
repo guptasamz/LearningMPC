@@ -48,16 +48,18 @@ RUN mkdir -p /sim_ws/src && ln -s /ws/src/f1tenth_gym_ros /sim_ws/src/f1tenth_gy
 # safe-set lmpc_ros2 is actually driving, which makes every default run
 # QP-infeasible. Unlike barc_oval (start pose ~(0,0,0), matching sim.yaml's
 # own sx/sy/stheta defaults), gold_conference_room's centerline starts at
-# roughly (-3.396, -11.568, 1.774 rad) -- sx/sy/stheta must be patched too,
-# not just map_path.
+# (-3.46, -11.60, pi/2) -- sx/sy/stheta must be patched too, not just
+# map_path. Matches the safe set's own first row (see
+# gold_conference_room_initial_safe_set.csv), regenerated with designed
+# track widths (TUM-style centerline csv) -- see LMPCCore::apply_csv_halfwidths.
 RUN cp /ws/src/LearningMPC/lmpc_ros2/data/gold_conference_room/gold_conference_room_map.png \
        /ws/src/LearningMPC/lmpc_ros2/data/gold_conference_room/gold_conference_room_map.yaml \
        /ws/src/f1tenth_gym_ros/maps/ && \
     sed -i \
       -e "s#maps/levine#maps/gold_conference_room_map#" \
-      -e "s/^\(\s*sx:\s*\).*/\1-3.3957536/" \
-      -e "s/^\(\s*sy:\s*\).*/\1-11.567745/" \
-      -e "s/^\(\s*stheta:\s*\).*/\11.773677/" \
+      -e "s/^\(\s*sx:\s*\).*/\1-3.460000/" \
+      -e "s/^\(\s*sy:\s*\).*/\1-11.600000/" \
+      -e "s/^\(\s*stheta:\s*\).*/\11.570796/" \
       /ws/src/f1tenth_gym_ros/config/sim.yaml
 
 # Eigen 3.4.0 / OSQP v0.6.3 / osqp-eigen v0.8.1 into src_gym/deps, same

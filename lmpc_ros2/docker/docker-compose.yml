@@ -51,16 +51,16 @@ services:
     # neither node ever reads or writes there.
     volumes:
       - ../data:/ws/install/lmpc_ros2/share/lmpc_ros2/data
-    # track_half_width_max override: gold_conference_room is a real room
-    # scan with corridors as narrow as ~0.6m total width (measured), far
-    # below lmpc_params.yaml's shared 0.8m default (sized for wide
-    # purpose-built tracks). Left at the wide default, the controller
-    # believes it has room it doesn't wherever initialize_width()'s wall
-    # search can't find a nearby wall, and plans through space that isn't
-    # actually open. Remove this override (or raise it) for a different,
-    # wider track passed via track_name/track_dir.
-    command: ["ros2", "launch", "lmpc_ros2", "lmpc.launch.py",
-              "track_half_width_max:=0.3"]
+    # No track_half_width_max override -- gold_conference_room's centerline
+    # csv now carries designed track widths (TUM-style x,y,w_tr_right,
+    # w_tr_left), which LMPCCore::apply_csv_halfwidths caps the ray-marched
+    # half-widths against (min of the two). That CSV cap is the authoritative
+    # defense against a ray escaping through a doorway and reporting a
+    # phantom-wide corridor -- narrowing track_half_width_max on top of it
+    # would just needlessly under-cut legitimate width wherever the ray
+    # search correctly finds nothing nearby. Kept at lmpc_params.yaml's
+    # shared 0.8m default.
+    command: ["ros2", "launch", "lmpc_ros2", "lmpc.launch.py"]
 
   # Generates a fresh initial safe set (README.md Section 3) -- NOT started
   # by plain `up`: it drives the car itself and would fight `lmpc` for
@@ -68,9 +68,9 @@ services:
   # the "seed" profile:
   #   docker compose -f lmpc_ros2/docker/docker-compose.yml --profile seed run --rm seed
   # Same no-override reasoning as `lmpc` above -- pure_pursuit.launch.py's
-  # own default is gold_conference_room, which has no bundled safe set (only
-  # a centerline) -- this MUST be run at least once before `lmpc` (above)
-  # can start against the default track.
+  # own default is gold_conference_room, which already ships a recorded
+  # initial_safe_set.csv (README.md Section 2.1) -- only needed to
+  # regenerate it, e.g. after editing the centerline.
   seed:
     build:
       context: ../..

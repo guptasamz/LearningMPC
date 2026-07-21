@@ -52,9 +52,9 @@ docker compose -f lmpc_ros2/docker/docker-compose.yml build
 
 ### 2.1 Seed The Initial Safe Set
 
-LMPC needs `<track_dir>/<track_name>_initial_safe_set.csv`. Generate it once per venue/track with `pure_pursuit_node`.
+LMPC needs `<track_dir>/<track_name>_initial_safe_set.csv`. Generate it once per venue/track with `pure_pursuit_node`. Both bundled tracks (`barc_oval` and `gold_conference_room`) already ship a recorded safe set — skip this section for those; go straight to 2.2.
 
-For the bundled `gold_conference_room` track:
+To (re)seed the bundled `gold_conference_room` track anyway, or after editing its centerline:
 
 ```bash
 docker compose -f lmpc_ros2/docker/docker-compose.yml --profile seed run --rm seed
@@ -247,7 +247,9 @@ lmpc_ros2/config/lmpc_params.yaml
 Important parameters:
 
 - `max_speed`: pure-pursuit speed cap while seeding the safe set. Override per run with `max_speed:=<value>`.
-- `track_half_width_max`: ceiling on the track half-width the controller believes it has wherever its wall search can't find a wall nearby. Default `0.8` is sized for wide purpose-built tracks (e.g. `barc_oval`); a track with genuinely narrow corridors (e.g. a real room scan) needs this lower, or the controller can plan through space that doesn't actually exist. `gold_conference_room` overrides it to `0.3` in `docker-compose.yml`'s `lmpc` command (measured corridor width there is as low as ~0.6m total). Override per run with `track_half_width_max:=<value>` (`lmpc.launch.py` only; `pure_pursuit_node` doesn't use this).
+- Track half-widths come from two layered sources, both automatic:
+  - **Designed widths from the centerline csv** (primary/authoritative): if `<track_name>_centerline.csv` has 4 columns (TUM-style `x, y, w_tr_right, w_tr_left`, `#`-comments allowed), `lmpc_node` passes it to `LMPCCore` as `halfwidth_csv` (see `lmpc.launch.py`) and it caps the ray-marched half-width at `csv_width - MAP_MARGIN` wherever that's smaller. This is what fixes SLAM maps where the ray-march can escape through a doorway/wall gap and report a corridor of many meters (`gold_conference_room` measured up to 13.6m vs. a true ~0.84m before this cap). A 2-column centerline (no width data) degrades gracefully to pure ray-marching.
+  - `track_half_width_max`: ceiling on the ray-marched half-width used both as `initialize_width()`'s pre-search default and its fallback when the wall search finds nothing within reach. Default `0.8` (matches the historical constant). Only worth lowering per-track if a centerline csv with real widths isn't available for that track — lowering it further when the csv cap is already active just needlessly under-cuts otherwise-legitimate width. Override per run with `track_half_width_max:=<value>` (`lmpc.launch.py` only; `pure_pursuit_node` doesn't use this).
 - `Ts`, `N`: controller period and horizon.
 - `r_accel`, `r_steer`, `r_d_accel`, `r_d_steer`: cost weights.
 - `osqp_max_iter`, `osqp_time_limit`: solver latency controls. Do not shrink `osqp_max_iter` below `20000` unless you have verified large-track solves.

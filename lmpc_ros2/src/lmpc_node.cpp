@@ -68,6 +68,14 @@ LmpcNode::LmpcNode() : rclcpp::Node("lmpc_node") {
   waypoint_csv_ = this->declare_parameter<std::string>("waypoint_csv", "");
   init_safe_set_csv_ = this->declare_parameter<std::string>("init_safe_set_csv", "");
   reg_warmstart_csv_ = this->declare_parameter<std::string>("reg_warmstart_csv", "");
+  // Optional: a TUM-style <track>_centerline.csv (x, y, w_tr_right,
+  // w_tr_left) caps Track::initialize_width()'s ray-marched half-widths at
+  // the designed track width wherever the ray would otherwise escape
+  // through a doorway/wall gap in the map and report a bogus wide-open
+  // corridor (see LMPCCore::apply_csv_halfwidths). Empty, missing, or a
+  // 2-column centerline (no width data) all degrade gracefully to pure
+  // ray-marching -- safe to always pass.
+  halfwidth_csv_ = this->declare_parameter<std::string>("halfwidth_csv", "");
   if (waypoint_csv_.empty() || init_safe_set_csv_.empty()) {
     throw std::runtime_error(
         "lmpc_ros2: waypoint_csv and init_safe_set_csv params are required "
@@ -165,7 +173,7 @@ void LmpcNode::build_controller(const nav_msgs::msg::OccupancyGrid &map_msg) {
         map_msg.info.height, map_msg.info.resolution,
         map_msg.info.origin.position.x, map_msg.info.origin.position.y,
         waypoint_csv_, init_safe_set_csv_, pose.x, pose.y, pose.yaw,
-        reg_warmstart_csv_);
+        reg_warmstart_csv_, halfwidth_csv_);
   } catch (const std::exception &e) {
     RCLCPP_ERROR(this->get_logger(), "lmpc_ros2: failed to construct LMPCCore: %s",
                  e.what());
