@@ -1,203 +1,256 @@
 # lmpc_ros2
 
-ROS2 (rclcpp) wrapper around `LMPCCore` (`../src_gym/cpp/lmpc_core.cpp`, same controller as
-`src/LMPC.cpp` + `online_training/`'s residual regression). No Python in the control loop.
+ROS2 wrapper around `LMPCCore` (`../src_gym/cpp/lmpc_core.cpp`). The control loop is C++/`rclcpp`; no Python runs in the controller.
 
-Two executables, run as separate steps:
-- **`pure_pursuit_node`** — drives a centerline via pure pursuit and produces the initial safe
-  set `lmpc_node` needs (Section 3). Run this first for any track that doesn't have one yet.
-- **`lmpc_node`** — the LMPC controller. Requires that pre-recorded initial safe set to run at all.
+Two executables are provided:
 
-Same nodes for `f1tenth_gym_ros` and the real car — only `pose_topic`/`drive_topic`/`map_topic`
-differ. **Docker required except Section 6 (real car).**
+- `pure_pursuit_node`: drives a centerline and records the initial safe set required by LMPC.
+- `lmpc_node`: runs the LMPC controller. It will not start without a matching `<track_name>_initial_safe_set.csv`.
 
-## Not included
+This package does not launch the real vehicle stack, localization, VESC bridge, joystick, map server, or e-stop layer. In Docker simulation those are provided by the compose setup. On the real car they must already be running before `lmpc_node` is launched.
 
-- Particle filter — `pose_topic` must already publish `nav_msgs/msg/Odometry`.
-- VESC/ackermann hardware bridge.
-- Safety/e-stop layer beyond the controller's own solve-failure fallback.
-- Live occupancy updates — map is read once at startup.
+## 0. Safety
 
-## 1. Prerequisites
+- Joystick/e-stop must override autonomy before any live run.
+- Keep `max_speed` low for first safe-set collection runs, typically `<= 1.0 m/s`.
+- Run with wheels off the ground first and inspect `/drive` before putting the car down.
+- Confirm the vehicle bridge expects the command semantics this package publishes. `lmpc_node` currently publishes raw commanded acceleration in `drive.speed`, matching this repo's patched gym backend. If your VESC bridge expects target speed, change `src/lmpc_node.cpp` before real driving.
+
+## 1. Topics
+
+`lmpc_node` expects these ROS interfaces:
+
+- `pose_topic`: `nav_msgs/msg/Odometry`, vehicle pose and twist used by LMPC.
+- `map_topic`: `nav_msgs/msg/OccupancyGrid`, transient-local map, read once at startup.
+- `drive_topic`: `ackermann_msgs/msg/AckermannDriveStamped`, command output.
+
+Default simulation topics are handled by the launch files. On the real car, pass the actual topic names explicitly.
+
+Typical real-car mapping from the F1TENTH stack:
+
+```text
+localization/PF -> /tracked_pose or /pf/pose/odom -> pose_topic
+map_server      -> /map                         -> map_topic
+lmpc_node       -> /drive                       -> ackermann_mux / VESC bridge
+```
+
+## 2. Docker Simulation
+
+Docker is the supported path for simulation. It builds ROS2 Humble, `f1tenth_gym_ros`, Eigen, OSQP, and osqp-eigen into the image.
+
+Prerequisites:
 
 - Docker + Compose v2.
-- Optional: NVIDIA Container Toolkit (GPU rviz2) — drop the `deploy.resources...` block in
-  `docker/docker-compose.yml` to skip it.
-- Optional: X11 display for rviz2 (works out of the box on WSLg/native Linux).
+- Optional NVIDIA Container Toolkit for GPU RViz. Remove the `deploy.resources...` block in `docker/docker-compose.yml` if unavailable.
+- Optional X11 display for RViz.
 
-Everything else (ROS2 Humble, `f1tenth_gym_ros` built from source against Humble, Eigen/OSQP/
-osqp-eigen) is built into the image.
+Build from the repository root:
 
-All config for the whole LMPC process — controller tuning *and* `pure_pursuit_node`'s
-`max_speed` — lives in one file, self-contained under this package: `config/lmpc_params.yaml`
-(Section 5). No separate env-file layer. It's a hand-kept transcription of `../Lmpc_params.yaml`
-(ROS1/gym's own file, outside this package) — see its header comment. `max_speed` is currently
-one shared value, not per-track — override it for a one-off run with `max_speed:=<value>`
-(Section 3) if a different track needs a different cap.
-
-## 2. Build
-
-From the **repo root**:
 ```bash
 docker compose -f lmpc_ros2/docker/docker-compose.yml build
 ```
-First build takes several minutes. Any repo file change invalidates the cache from `COPY .`
-onward, since the build context is the whole repo.
 
-## 3. Generating a fresh initial safe set for a new track
+### 2.1 Seed The Initial Safe Set
 
-**Required before Section 4** — the bundled `gold_conference_room` track ships a centerline but
-no safe set yet; `lmpc_node` throws on startup without one. Seed it once (below), then move to
-Section 4. Skip only if you've already seeded a `<track_dir>/<track_name>_initial_safe_set.csv`
-for the track you're about to run.
+LMPC needs `<track_dir>/<track_name>_initial_safe_set.csv`. Generate it once per venue/track with `pure_pursuit_node`.
 
-`lmpc_node` needs an `_initial_safe_set.csv` for its track before it can run at all.
-`pure_pursuit_node` produces one: drives a `_centerline.csv` via pure pursuit + a capped-speed
-P-controller, records the CSV `LMPCCore` reads, exits after `laps` laps (default 2). Its speed
-cap comes from `config/lmpc_params.yaml`'s `max_speed` — **required at the node level** (throws
-if `<= 0`).
+For the bundled `gold_conference_room` track:
 
-Seed the bundled `gold_conference_room` track — a `seed` compose service does this directly:
 ```bash
 docker compose -f lmpc_ros2/docker/docker-compose.yml --profile seed run --rm seed
 ```
-Not started by plain `up` (Section 4) — it drives the car itself and would fight `lmpc` for
-`/drive` if it launched automatically every time, hence the `--profile seed` opt-in.
 
-**New track:** needs its own `_centerline.csv` (Section 3 above) and, if it needs a different
-speed cap than `config/lmpc_params.yaml`'s shared `max_speed`, pass `max_speed:=<value>` explicitly.
-Point `track_name:=...` (and `track_dir:=...` if it's not bundled in this package's own `data/`)
-at it — e.g. `docker compose ... run --rm seed ros2 launch lmpc_ros2 pure_pursuit.launch.py
-track_name:=my_track max_speed:=1.5` (bind-mount the directory too if external, same pattern as
-Section 4).
+This drives the simulated car using pure pursuit, writes the safe-set CSV, then exits. It is intentionally not part of normal `docker compose up` because it publishes `/drive` and would fight `lmpc_node`.
 
-The node writes `<track_dir>/<track_name>_initial_safe_set.csv`, the same path `lmpc.launch.py`
-reads — so: run this, wait for `"wrote ... -- shutting down"` in the log, then run Section 4.
+For a custom track, bind-mount its directory and pass `track_dir`, `track_name`, and optionally `max_speed`:
 
-Real car: same commands with `pose_topic:=/pf/pose/odom` (or your localization topic) — read
-Section 6 first, the bench-test-before-track-test rule applies here too.
+```bash
+docker compose -f lmpc_ros2/docker/docker-compose.yml \
+  run --rm -v /host/path/to/track:/host/path/to/track seed \
+  ros2 launch lmpc_ros2 pure_pursuit.launch.py \
+  track_dir:=/host/path/to/track track_name:=my_track max_speed:=1.5
+```
 
-## 4. Run
+The track directory must contain `<track_name>_centerline.csv`. The node writes `<track_name>_initial_safe_set.csv` in the same directory.
+
+### 2.2 Run Closed Loop In Simulation
+
+Start the simulator and LMPC:
 
 ```bash
 docker compose -f lmpc_ros2/docker/docker-compose.yml up
 ```
-Two containers: **`sim`** (`f1tenth_gym_ros` — sim, rviz2, map_server; publishes
-`/ego_racecar/odom`, `/map`) and **`lmpc`** (`lmpc_node`, track `gold_conference_room`; publishes
-`/drive`).
-Background: `up -d` then `logs -f`. Stop: `down`.
 
-Different track (bind-mount its host directory in — not otherwise visible inside the container):
+This starts two services:
+
+- `sim`: `f1tenth_gym_ros`, RViz, map server, `/ego_racecar/odom`, `/map`.
+- `lmpc`: `lmpc_node`, default `gold_conference_room` track, publishes `/drive`.
+
+Run in the background with:
+
+```bash
+docker compose -f lmpc_ros2/docker/docker-compose.yml up -d
+docker compose -f lmpc_ros2/docker/docker-compose.yml logs -f
+```
+
+Stop with:
+
+```bash
+docker compose -f lmpc_ros2/docker/docker-compose.yml down
+```
+
+Custom track example:
+
 ```bash
 docker compose -f lmpc_ros2/docker/docker-compose.yml \
-  run --rm -v /host/path/to/dir:/host/path/to/dir lmpc \
+  run --rm -v /host/path/to/track:/host/path/to/track lmpc \
   ros2 launch lmpc_ros2 lmpc.launch.py \
-  track_dir:=/host/path/to/dir track_name:=my_track
+  track_dir:=/host/path/to/track track_name:=my_track
 ```
-Needs `<track_name>_waypoints.csv`/`<track_name>_initial_safe_set.csv` in that directory (no safe
-set yet? see Section 3, same bind-mount pattern).
 
-**Verify:** `ros2 topic hz /drive` → ~20Hz with changing values. In the `lmpc` logs:
-- `"LMPCCore initialized ..."` — controller is up. Missing → check `/map` durability.
-- `"control step took ... over Ts budget"` — occasional is fine, frequent → re-tune (Section 5).
-- `"QP solve failed ..."` — fallback firing; frequent → track/map mismatch.
+The directory must contain both `<track_name>_waypoints.csv` and `<track_name>_initial_safe_set.csv`.
 
-**Default mismatch, already handled:** upstream `f1tenth_gym_ros` defaults to its own Levine map;
-`lmpc_ros2` defaults to `gold_conference_room` — left alone, that's a QP-infeasible mismatch out of
-the box. The Dockerfile (Section 2's build) already patches `f1tenth_gym_ros/config/sim.yaml`'s
-`map_path` and `sx`/`sy`/`stheta` to `gold_conference_room`'s own map and start pose at image-build
-time, so this isn't something you do by hand for the default track. Only relevant if you point
-`track_name`/`track_dir` at a *different* track (the bind-mount example above): make the same edit
-yourself — `map_path`/`sx`/`sy`/`stheta` to that track's own map/start pose, then rebuild (or
-bind-mount an edited `sim.yaml` for faster iteration).
+### 2.3 Simulation Checks
 
-## 5. Tuning
+Inside the running ROS environment, verify:
 
-Params live in `config/lmpc_params.yaml`, self-contained under this package — the **only** file
-to edit for the whole LMPC process, both nodes (`lmpc_node`'s section and `pure_pursuit_node`'s
-section). It started as a transcription of `../Lmpc_params.yaml` (ROS1/gym's own file, outside
-this package), but `N`, `Ts`, `STEER_MAX`, `r_accel`/`r_steer`, and the vehicle physical params
-now **intentionally diverge** from it — see the next paragraph and the file's own inline
-comments for why. Retune both files by hand if you want a given change to apply to both; they're
-intentionally separate, not shared across that boundary.
-- `r_accel`/`r_steer`/`r_d_accel`/`r_d_steer` — cost weights.
-- `osqp_max_iter`/`osqp_time_limit` — don't shrink `osqp_max_iter` below 20000 (large tracks need
-  it). Bound worst-case latency via `osqp_time_limit` instead.
-- `dynamics_model: 1` — kinematic + online residual regression instead of known-dynamics.
-- `max_speed` — `pure_pursuit_node`'s speed cap while seeding (Section 3). Shared across tracks
-  unless overridden per-run with `max_speed:=<value>`.
-- Vehicle physical params (`friction_coeff`, `C_S_front`/`rear`, `height_cg`, `mass`,
-  `moment_inertia`) currently match `f1tenth_gym_jl`'s (and `DA_MCTS_new_implementation`'s)
-  generic f110_gym simulator defaults, **not** a real-car measurement — the file this repo
-  originally shipped with (`../Lmpc_params.yaml`) labels its own values as actual measurements of
-  car "lidart". Revisit before trusting the dynamics model on real hardware.
+```bash
+ros2 topic hz /drive
+ros2 topic hz /ego_racecar/odom
+ros2 topic echo /drive
+```
 
-Needs an image rebuild (Section 2) to take effect; re-check timing after any change.
+Expected logs:
 
-Tuned around `Ts: 0.025`, `N: 50` (`N * Ts` = 1.25s horizon, matching `f1tenth_gym_jl`'s
-`HORIZON_STEPS=50`/`dt=0.025` on the same `barc_oval` track — deliberately ported together as a
-set, not mixed with the old `N=25`/`Ts=0.05`-era weights). This is a **larger, more expensive QP**
-than what was last measured (`≈4.5ms mean / ≈21-31ms max`, itself from `Ts: 0.05` testing that
-doesn't carry over either) — this exact configuration's timing is unverified. Re-check the
-overrun log (Section 4) before trusting it on any real hardware or track.
+- `LMPCCore initialized ...`: controller is up.
+- `control step took ... over Ts budget`: occasional is acceptable, frequent means retune before real-car use.
+- `QP solve failed ...`: fallback is firing; frequent failures usually mean track/map/safe-set mismatch.
 
-## 6. Real car deployment
+Default map note: the Dockerfile patches upstream `f1tenth_gym_ros/config/sim.yaml` to use `gold_conference_room`. If you run a different track, also point the simulator `map_path`, `sx`, `sy`, and `stheta` at that track or bind-mount an edited `sim.yaml`.
 
-Docker not required — build natively on the car's compute.
+## 3. Real Car With ROS2
 
-**Prerequisites:** ROS2 + `colcon`, `rclcpp nav_msgs ackermann_msgs ament_index_cpp launch
-launch_ros`.
+Docker is not used on the car. Build natively in the ROS2 workspace.
 
-**Build — two steps, in order. Skipping step 1 is the most common failure here**
-(`CMake Error ... Could not find a package configuration file provided by "osqp"`):
+Prerequisites:
 
-1. Build Eigen 3.4/OSQP v0.6.3/osqp-eigen v0.8.1 into `../src_gym/deps/` — `lmpc_ros2/CMakeLists.txt`
-   looks for them there via `CMAKE_PREFIX_PATH` and won't configure without them:
-   ```bash
-   cd ../src_gym && ./build.sh && cd -
-   ```
-   This also builds a Python module (`lmpc_core`) this package doesn't need — that's fine, ignore
-   it; if `build.sh` errors out on that *last* step specifically (e.g. no `.venv`/pybind11
-   available), the Eigen/OSQP/osqp-eigen deps it needed to build first are already done and
-   `lmpc_ros2` will still find them.
-2. Now build this package:
-   ```bash
-   colcon build --packages-select lmpc_ros2
-   source install/setup.bash
-   ```
+- ROS2 Humble and `colcon`.
+- ROS dependencies for this package: `rclcpp`, `nav_msgs`, `ackermann_msgs`, `ament_index_cpp`, `launch`, `launch_ros`.
+- A real vehicle stack already running: joystick/e-stop, VESC bridge, lidar, map server, and localization.
 
-**Before running anything below**, after a clean sim pass (Section 4):
-1. Confirm your real localization topic's name (`ros2 topic list`) — used as `pose_topic` below.
-2. Node reads `twist.linear.{x,y}` as body velocity, `twist.angular.z` as yaw rate — if your
-   source only gives `vx`, `vy` reads near-zero (an approximation, not a guarantee).
-3. Confirm what publishes `map_topic` (transient-local `OccupancyGrid`) on your car — a
-   map_server/localization node, not anything this package provides. Must already be running
-   before either command below.
-4. Have a physical e-stop within reach — this package provides none.
+### 3.1 Build Native Dependencies
 
-**1. Seed a safe set for your venue**, if you don't already have one (same requirement as
-Section 3 — needs `<track_dir>/<track_name>_centerline.csv` already present):
+From this repository, build Eigen/OSQP/osqp-eigen into `../src_gym/deps/` first:
+
+```bash
+cd ../src_gym
+./build.sh
+cd -
+```
+
+Then build the ROS2 package:
+
+```bash
+colcon build --packages-select lmpc_ros2
+source install/setup.bash
+```
+
+If `build.sh` only fails at the final Python module step, that is usually fine for `lmpc_ros2`; the required C++ dependencies were already built.
+
+### 3.2 Start The Car Stack
+
+Launch the real F1TENTH stack outside this package. In the style of `f1tenth_ws`, the expected sequence is:
+
+```bash
+source /opt/ros/humble/setup.bash
+source /path/to/f1tenth_ws/install/setup.bash
+ros2 launch f1tenth_stack bringup_launch.py map:=/path/to/venue.yaml
+```
+
+That stack should provide:
+
+- joystick + `joy_teleop` for manual override.
+- VESC driver and `ackermann_to_vesc_node` for actuation.
+- `vesc_to_odom_node` publishing `/odom`.
+- Hokuyo/URG lidar publishing `/scan`.
+- `ackermann_mux` for command arbitration.
+- static `base_link -> laser` TF.
+- `nav2_map_server` publishing `/map`.
+
+Launch localization separately, for example SynPF:
+
+```bash
+ros2 launch syn_pf_cpp synpf_cpp_real_launch.py
+```
+
+Before LMPC, verify the required streams:
+
+```bash
+ros2 topic hz /scan
+ros2 topic hz /odom
+ros2 topic echo --once /map
+ros2 topic list | grep -E 'tracked_pose|pf|odom'
+```
+
+Choose the localization odometry topic you will pass as `pose_topic`. This package expects `nav_msgs/msg/Odometry`; if your PF publishes `geometry_msgs/msg/PoseStamped` only, add/launch a relay to odometry or adapt `lmpc_node`.
+
+### 3.3 Seed A Real-Venue Safe Set
+
+Skip this only if `<track_dir>/<track_name>_initial_safe_set.csv` already exists and matches the venue map/centerline.
+
+Bench test first with wheels off the ground. Then run slowly:
+
 ```bash
 ros2 launch lmpc_ros2 pure_pursuit.launch.py \
   pose_topic:=/pf/pose/odom \
-  track_dir:=/path/to/venue track_name:=venue \
+  drive_topic:=/drive \
+  track_dir:=/path/to/venue \
+  track_name:=venue \
   max_speed:=1.0
 ```
-Bench test first (wheels off the ground) — this node drives the car. `max_speed` has no
-node-level default; set it explicitly and keep it low. Wait for `"wrote ... -- shutting down"`
-in the log before moving on.
 
-**2. Run the controller:**
+Wait for the log message that it wrote the safe set and is shutting down. The venue directory must contain `<track_name>_centerline.csv`.
+
+### 3.4 Run LMPC On The Real Car
+
+With vehicle stack, map server, localization, and safe set ready:
+
 ```bash
 ros2 launch lmpc_ros2 lmpc.launch.py \
-  pose_topic:=/pf/pose/odom map_topic:=/map \
-  track_dir:=/path/to/venue track_name:=venue
+  pose_topic:=/pf/pose/odom \
+  map_topic:=/map \
+  drive_topic:=/drive \
+  track_dir:=/path/to/venue \
+  track_name:=venue
 ```
-Bench test this one too before an actual track run — confirm `/drive` looks physically sane
-(`ros2 topic echo /drive`) with the wheels off the ground first.
 
-`drive.speed` carries a raw commanded **acceleration**, published directly — matching this
-project's vendored/patched `f1tenth_gym` (`base_classes.py`'s `RaceCar::update_pose()` treats the
-field that way, not as a target velocity). Confirm your VESC/ackermann bridge expects an
-acceleration in that field, not a target speed — if it wants the latter, that's a small change in
-`control_tick()` (`src/lmpc_node.cpp`), not the reverse.
+If your stack publishes localization somewhere else, replace `/pf/pose/odom` with that topic.
+
+Real-car checks:
+
+```bash
+ros2 topic hz /drive
+ros2 topic echo /drive
+ros2 topic hz /pf/pose/odom
+```
+
+Keep the joystick override active. Stop immediately if `/drive` commands are stale, sign-flipped, saturated, or semantically wrong for the VESC bridge.
+
+## 4. Tuning
+
+All LMPC and pure-pursuit parameters live in:
+
+```text
+lmpc_ros2/config/lmpc_params.yaml
+```
+
+Important parameters:
+
+- `max_speed`: pure-pursuit speed cap while seeding the safe set. Override per run with `max_speed:=<value>`.
+- `Ts`, `N`: controller period and horizon.
+- `r_accel`, `r_steer`, `r_d_accel`, `r_d_steer`: cost weights.
+- `osqp_max_iter`, `osqp_time_limit`: solver latency controls. Do not shrink `osqp_max_iter` below `20000` unless you have verified large-track solves.
+- `dynamics_model: 1`: kinematic model plus online residual regression.
+- Vehicle physical params: currently match simulator defaults, not necessarily the measured real car. Revisit before trusting hardware dynamics.
+
+Rebuild the Docker image after parameter edits for simulation. Rebuild the ROS2 package natively after source changes on the car.
