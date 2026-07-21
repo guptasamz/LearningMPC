@@ -43,24 +43,26 @@ def launch_setup(context, *args, **kwargs):
         # gold_conference_room's directory for a different track's files.
         track_dir = os.path.join(pkg_share, "data", track_name)
 
+    overrides = {
+        "pose_topic": LaunchConfiguration("pose_topic"),
+        "drive_topic": LaunchConfiguration("drive_topic"),
+        "map_topic": LaunchConfiguration("map_topic"),
+        "waypoint_csv": os.path.join(track_dir, f"{track_name}_waypoints.csv"),
+        "init_safe_set_csv": os.path.join(
+            track_dir, f"{track_name}_initial_safe_set.csv"
+        ),
+    }
+    half_width_max_override = LaunchConfiguration("track_half_width_max").perform(context)
+    if half_width_max_override:
+        overrides["track_half_width_max"] = float(half_width_max_override)
+
     lmpc_node = Node(
         package="lmpc_ros2",
         executable="lmpc_node",
         name="lmpc_node",
         output="screen",
         prefix=LaunchConfiguration("debug_prefix"),
-        parameters=[
-            params_file,
-            {
-                "pose_topic": LaunchConfiguration("pose_topic"),
-                "drive_topic": LaunchConfiguration("drive_topic"),
-                "map_topic": LaunchConfiguration("map_topic"),
-                "waypoint_csv": os.path.join(track_dir, f"{track_name}_waypoints.csv"),
-                "init_safe_set_csv": os.path.join(
-                    track_dir, f"{track_name}_initial_safe_set.csv"
-                ),
-            },
-        ],
+        parameters=[params_file, overrides],
     )
     return [lmpc_node]
 
@@ -99,6 +101,18 @@ def generate_launch_description():
                      "a backtrace on crash. Empty (default) runs the node "
                      "directly.",
     )
+    half_width_max_arg = DeclareLaunchArgument(
+        "track_half_width_max", default_value="",
+        description="Ceiling [m] on the track half-width the controller "
+                     "believes it has wherever Track::initialize_width()'s "
+                     "wall search can't find a wall nearby. Empty (default) "
+                     "uses config/lmpc_params.yaml's value (0.8m, sized for "
+                     "wide purpose-built tracks). Override lower for a track "
+                     "with genuinely narrow corridors, e.g. a real room scan "
+                     "-- an unfound-wall fallback that's too generous can "
+                     "make the controller plan through space that doesn't "
+                     "actually exist.",
+    )
 
     return LaunchDescription([
         pose_topic_arg,
@@ -107,5 +121,6 @@ def generate_launch_description():
         track_dir_arg,
         track_name_arg,
         debug_prefix_arg,
+        half_width_max_arg,
         OpaqueFunction(function=launch_setup),
     ])

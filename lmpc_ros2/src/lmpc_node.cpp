@@ -89,6 +89,13 @@ LmpcNode::LmpcNode() : rclcpp::Node("lmpc_node") {
   declare_num("DECELERATION_MAX", 9.51);
   declare_num("VEL_THRESHOLD", 0.8);
   declare_num("MAP_MARGIN", 0.45);
+  // Ceiling on the track half-width the controller believes it has wherever
+  // Track::initialize_width()'s wall search can't find a wall nearby --
+  // default matches track.h's historical HALF_WIDTH_MAX (0.8m, sized for
+  // wide purpose-built tracks like barc_oval). Override lower for a track
+  // with genuinely narrow corridors (see launch/lmpc.launch.py's
+  // track_half_width_max argument, used for gold_conference_room).
+  declare_num("track_half_width_max", 0.8);
   declare_num("WAYPOINT_SPACE", 0.2);
   declare_num("r_accel", 1.5);
   declare_num("r_steer", 18.0);

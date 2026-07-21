@@ -51,7 +51,16 @@ services:
     # neither node ever reads or writes there.
     volumes:
       - ../data:/ws/install/lmpc_ros2/share/lmpc_ros2/data
-    command: ["ros2", "launch", "lmpc_ros2", "lmpc.launch.py"]
+    # track_half_width_max override: gold_conference_room is a real room
+    # scan with corridors as narrow as ~0.6m total width (measured), far
+    # below lmpc_params.yaml's shared 0.8m default (sized for wide
+    # purpose-built tracks). Left at the wide default, the controller
+    # believes it has room it doesn't wherever initialize_width()'s wall
+    # search can't find a nearby wall, and plans through space that isn't
+    # actually open. Remove this override (or raise it) for a different,
+    # wider track passed via track_name/track_dir.
+    command: ["ros2", "launch", "lmpc_ros2", "lmpc.launch.py",
+              "track_half_width_max:=0.3"]
 
   # Generates a fresh initial safe set (README.md Section 3) -- NOT started
   # by plain `up`: it drives the car itself and would fight `lmpc` for

@@ -247,6 +247,7 @@ lmpc_ros2/config/lmpc_params.yaml
 Important parameters:
 
 - `max_speed`: pure-pursuit speed cap while seeding the safe set. Override per run with `max_speed:=<value>`.
+- `track_half_width_max`: ceiling on the track half-width the controller believes it has wherever its wall search can't find a wall nearby. Default `0.8` is sized for wide purpose-built tracks (e.g. `barc_oval`); a track with genuinely narrow corridors (e.g. a real room scan) needs this lower, or the controller can plan through space that doesn't actually exist. `gold_conference_room` overrides it to `0.3` in `docker-compose.yml`'s `lmpc` command (measured corridor width there is as low as ~0.6m total). Override per run with `track_half_width_max:=<value>` (`lmpc.launch.py` only; `pure_pursuit_node` doesn't use this).
 - `Ts`, `N`: controller period and horizon.
 - `r_accel`, `r_steer`, `r_d_accel`, `r_d_steer`: cost weights.
 - `osqp_max_iter`, `osqp_time_limit`: solver latency controls. Do not shrink `osqp_max_iter` below `20000` unless you have verified large-track solves.

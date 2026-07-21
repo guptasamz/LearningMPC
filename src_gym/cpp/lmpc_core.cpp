@@ -113,7 +113,7 @@ public:
         map_.data.assign(grid_data.begin(), grid_data.begin() + (size_t)width*height);
         occupancy_grid::inflate_map(map_, MAP_MARGIN);
 
-        track_ = new Track(waypoint_file, map_, true);
+        track_ = new Track(waypoint_file, map_, true, TRACK_HALF_WIDTH_MAX);
 
         // constructor tail of LMPC::LMPC, verbatim (first odom sample)
         s_prev_ = track_->findTheta(x0, y0, 0, true);
@@ -268,6 +268,7 @@ private:
     double ACCELERATION_MAX;
     double DECELERATION_MAX;
     double MAP_MARGIN;
+    double TRACK_HALF_WIDTH_MAX;
     double VEL_THRESHOLD;
     double WAYPOINT_SPACE;
     // MPC params
@@ -410,6 +411,16 @@ private:
         rate_cost_on_ = (rd_a > 0.0) || (rd_s > 0.0);
         u_prev_applied_.setZero();
         MAP_MARGIN = p.at("MAP_MARGIN");
+        // ceiling on the track-boundary half-width the controller believes it
+        // has wherever initialize_width()'s wall search can't find a wall
+        // nearby (both the default before that search runs, and its
+        // fallback). Absent = HALF_WIDTH_MAX (track.h's historical 0.8m,
+        // sized for wide purpose-built tracks) -- override lower for a track
+        // with genuinely narrow corridors (e.g. a real room scan), or an
+        // unfound-wall fallback can make the controller plan through space
+        // that doesn't actually exist.
+        TRACK_HALF_WIDTH_MAX = p.count("track_half_width_max")
+            ? p.at("track_half_width_max") : HALF_WIDTH_MAX;
         // optional OSQP numerical knobs; absent = library defaults (original behavior)
         osqp_max_iter_ = p.count("osqp_max_iter") ? (int)p.at("osqp_max_iter") : 0;
         osqp_scaling_ = p.count("osqp_scaling") ? (int)p.at("osqp_scaling") : -1;

@@ -50,8 +50,18 @@ public:
     double space;
     nav_msgs::OccupancyGrid map;
     vector<double> width_info;
+    double half_width_max;
 
-    Track(string file_name, nav_msgs::OccupancyGrid& map, bool sparse=false) : space(0.05), map(map){
+    // half_width_max: ceiling on centerline_points[i].{left,right}_half_width
+    // -- both the pre-search default (line below) and the fallback used when
+    // initialize_width()'s wall search finds nothing within reach. Defaults
+    // to the historical HALF_WIDTH_MAX (0.8m, sized for wide purpose-built
+    // tracks); pass a smaller value for a track with genuinely narrow
+    // corridors (e.g. a real room scan) so an unfound wall doesn't make the
+    // controller believe it has more room than it does.
+    Track(string file_name, nav_msgs::OccupancyGrid& map, bool sparse=false,
+          double half_width_max=HALF_WIDTH_MAX)
+        : space(0.05), map(map), half_width_max(half_width_max){
         space = 0.05;
         centerline_points.clear();
         vector<geometry_msgs::Point> waypoints;
@@ -82,7 +92,7 @@ public:
                 theta += dist;
                 Point_ref p;
                 p.x = waypoints.at(next).x; p.y = waypoints.at(next).y; p.theta = theta;
-                p.left_half_width = p.right_half_width = HALF_WIDTH_MAX;
+                p.left_half_width = p.right_half_width = half_width_max;
                 centerline_points.push_back(p);
                 curr = next;
             }
@@ -160,9 +170,9 @@ public:
             // track) -- an unbounded search here can walk clean off the map,
             // and occupancy_grid::xy_ind2ind CLAMPS out-of-range indices
             // instead of erroring, so an unbounded loop would never terminate
-            // in that case. Cap at HALF_WIDTH_MAX and fall back to it (the
+            // in that case. Cap at half_width_max and fall back to it (the
             // pre-existing default half-width) if no wall is found in range.
-            int max_t = static_cast<int>(ceil(HALF_WIDTH_MAX/map.info.resolution));
+            int max_t = static_cast<int>(ceil(half_width_max/map.info.resolution));
 
             //search right until hit right track boundary
             bool found_right = false;
@@ -188,8 +198,8 @@ public:
                     break;
                 }
             }
-            centerline_points[i].left_half_width = found_left ? (p_left-p).norm() : HALF_WIDTH_MAX;
-            centerline_points[i].right_half_width = found_right ? (p_right-p).norm() : HALF_WIDTH_MAX;
+            centerline_points[i].left_half_width = found_left ? (p_left-p).norm() : half_width_max;
+            centerline_points[i].right_half_width = found_right ? (p_right-p).norm() : half_width_max;
         }
     }
 
