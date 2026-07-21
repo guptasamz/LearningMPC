@@ -159,6 +159,12 @@ def main():
     ap.add_argument("--reg-warmstart", default=None,
                     help="dynamics-pairs csv (record_initial_ss.py --out-dyn) "
                          "to seed the residual regression buffer at startup")
+    ap.add_argument("--no-csv-halfwidths", action="store_true",
+                    help="ignore designed track widths from <map>_centerline.csv "
+                         "and use pure occupancy-grid ray-marching (the "
+                         "original behavior). By default, when the centerline "
+                         "csv has width columns they cap the ray-marched "
+                         "half-widths — seals phantom openings in SLAM maps")
     ap.add_argument("--env-dv", type=float, default=None,
                     help="experience speed envelope: planned speed at any track "
                          "position <= max driven there + ENV_DV [m/s] (0/absent "
@@ -208,12 +214,28 @@ def main():
     grid, w, h, res, ox, oy = load_occupancy_grid(MAP_STEM)
     sx, sy, syaw = first_safe_set_pose(INIT_SS_CSV)
 
+    # designed track widths: use <map>_centerline.csv (TUM format, 4 columns)
+    # to cap the ray-marched half-widths, when present and not disabled
+    halfwidth_csv = ""
+    if args.map and not args.no_csv_halfwidths:
+        cand = os.path.join(REPO, "data", "maps", args.map,
+                            f"{args.map}_centerline.csv")
+        if os.path.exists(cand):
+            with open(cand) as f:
+                for line in f:
+                    if line.strip() and not line.startswith("#"):
+                        if len(line.split(",")) >= 4:
+                            halfwidth_csv = cand
+                        break
+        print(f"half-widths: {'csv-capped (' + cand + ')' if halfwidth_csv else 'ray-march only'}")
+
     core = lmpc_core.LMPCCore(
         params=params, grid_data=grid, width=w, height=h,
         resolution=res, origin_x=ox, origin_y=oy,
         waypoint_file=WAYPOINT_CSV, init_data_file=INIT_SS_CSV,
         x0=sx, y0=sy, yaw0=syaw,
-        reg_warmstart_file=args.reg_warmstart or "")
+        reg_warmstart_file=args.reg_warmstart or "",
+        halfwidth_csv=halfwidth_csv)
     print(f"track length: {core.track_length():.2f} m")
 
     env = gym.make("f110_gym:f110-v0", map=MAP_STEM, map_ext=".png",

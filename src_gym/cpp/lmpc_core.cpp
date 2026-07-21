@@ -25,6 +25,8 @@
 #include <math.h>
 #include <vector>
 #include <iostream>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <cmath>
 #include <map>
@@ -80,7 +82,8 @@ public:
              const std::string& waypoint_file,
              const std::string& init_data_file,
              double x0, double y0, double yaw0,
-             const std::string& reg_warmstart_file = ""){
+             const std::string& reg_warmstart_file = "",
+             const std::string& halfwidth_csv = ""){
 
         getParameters(params);
 
@@ -114,6 +117,8 @@ public:
         occupancy_grid::inflate_map(map_, MAP_MARGIN);
 
         track_ = new Track(waypoint_file, map_, true);
+        if (!halfwidth_csv.empty())
+            apply_csv_halfwidths(halfwidth_csv);
 
         // constructor tail of LMPC::LMPC, verbatim (first odom sample)
         s_prev_ = track_->findTheta(x0, y0, 0, true);
@@ -341,6 +346,42 @@ private:
     bool first_run_;
     vector<geometry_msgs::Point> border_lines_;
     bool last_solve_ok_;
+
+    /* Override the ray-marched half-widths with the designed track widths
+     * from a TUM-style centerline csv (x, y, w_tr_right, w_tr_left; '#'
+     * comments). Motivation: on SLAM maps the perpendicular ray can escape
+     * through doorways/wall gaps and report a corridor of many meters
+     * (validated on gold_conference_room: up to 13.6 m vs the true 0.84 m).
+     * Semantics kept identical to the ray-march path:
+     *   - csv widths are raw geometry, so MAP_MARGIN is subtracted here
+     *     (ray-marched widths already carry it via the inflated grid);
+     *   - the applied width is min(ray-marched, csv - margin): the csv seals
+     *     phantom openings, while a genuinely mapped obstacle intruding into
+     *     the nominal corridor (which the csv cannot know about) still wins. */
+    void apply_csv_halfwidths(const std::string& file){
+        std::ifstream f(file);
+        if (!f.good()){ cout << "[LMPC] halfwidth csv missing: " << file << endl; return; }
+        std::string line;
+        int n_rows = 0, n_shrunk = 0;
+        const double floor_w = 0.05;
+        while (std::getline(f, line)){
+            if (line.empty() || line[0] == '#') continue;
+            std::replace(line.begin(), line.end(), ',', ' ');
+            std::istringstream ss(line);
+            double x, y, w_r, w_l;
+            if (!(ss >> x >> y >> w_r >> w_l)) continue;
+            const double th = track_->findTheta(x, y, 0, true);
+            const double cur_l = track_->getLeftHalfWidth(th);
+            const double cur_r = track_->getRightHalfWidth(th);
+            const double new_l = min(cur_l, max(w_l - MAP_MARGIN, floor_w));
+            const double new_r = min(cur_r, max(w_r - MAP_MARGIN, floor_w));
+            if (new_l < cur_l || new_r < cur_r) n_shrunk++;
+            track_->setHalfWidth(th, new_l, new_r);
+            n_rows++;
+        }
+        cout << "[LMPC] csv half-widths: " << n_rows << " rows applied, "
+             << n_shrunk << " bins narrowed vs ray-march" << endl;
+    }
 
     /* Warm-start the residual regression from a recorded dynamics-pairs csv
      * (record_initial_ss.py --out-dyn): rows
@@ -1095,13 +1136,15 @@ PYBIND11_MODULE(lmpc_core, m){
         .def(py::init<const std::map<std::string,double>&, py::array_t<int8_t>,
                       uint32_t, uint32_t, double, double, double,
                       const std::string&, const std::string&,
-                      double, double, double, const std::string&>(),
+                      double, double, double, const std::string&,
+                      const std::string&>(),
              py::arg("params"), py::arg("grid_data"),
              py::arg("width"), py::arg("height"),
              py::arg("resolution"), py::arg("origin_x"), py::arg("origin_y"),
              py::arg("waypoint_file"), py::arg("init_data_file"),
              py::arg("x0"), py::arg("y0"), py::arg("yaw0"),
-             py::arg("reg_warmstart_file") = "")
+             py::arg("reg_warmstart_file") = "",
+             py::arg("halfwidth_csv") = "")
         .def("set_state", &LMPCCore::set_state,
              py::arg("x"), py::arg("y"), py::arg("yaw"),
              py::arg("vx"), py::arg("vy"), py::arg("yawdot"))
