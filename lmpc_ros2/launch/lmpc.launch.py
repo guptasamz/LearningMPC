@@ -48,6 +48,7 @@ def launch_setup(context, *args, **kwargs):
         executable="lmpc_node",
         name="lmpc_node",
         output="screen",
+        prefix=LaunchConfiguration("debug_prefix"),
         parameters=[
             params_file,
             {
@@ -91,6 +92,13 @@ def generate_launch_description():
                      "output_csv uses the same convention, see "
                      "pure_pursuit.launch.py)",
     )
+    debug_prefix_arg = DeclareLaunchArgument(
+        "debug_prefix", default_value="",
+        description="Prefix command for lmpc_node, e.g. "
+                     "debug_prefix:='gdb -batch -ex run -ex bt --args' to get "
+                     "a backtrace on crash. Empty (default) runs the node "
+                     "directly.",
+    )
 
     return LaunchDescription([
         pose_topic_arg,
@@ -98,5 +106,6 @@ def generate_launch_description():
         map_topic_arg,
         track_dir_arg,
         track_name_arg,
+        debug_prefix_arg,
         OpaqueFunction(function=launch_setup),
     ])

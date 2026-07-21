@@ -11,6 +11,7 @@ SHELL ["/bin/bash", "-c"]
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
       cmake \
+      gdb \
       git \
       python3-pip \
       python3-colcon-common-extensions \
@@ -107,7 +108,7 @@ RUN apt-get update && \
 
 RUN . /opt/ros/humble/setup.bash && \
     colcon build --packages-select f1tenth_gym_ros lmpc_ros2 \
-      --cmake-args -DCMAKE_BUILD_TYPE=Release
+      --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
 COPY lmpc_ros2/docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
