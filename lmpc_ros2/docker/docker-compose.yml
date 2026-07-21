@@ -41,8 +41,16 @@ services:
     # separate --rm containers from the same image and never share a
     # filesystem, so `seed`'s write would otherwise vanish before `lmpc`
     # could read it.
+    #
+    # Mounted onto the INSTALL share dir, not the source tree: the launch
+    # files resolve track_dir via get_package_share_directory("lmpc_ros2"),
+    # which entrypoint.sh's `source /ws/install/setup.bash` points at
+    # /ws/install/lmpc_ros2/share/lmpc_ros2 -- not /ws/src/.../lmpc_ros2.
+    # CMakeLists.txt's `install(DIRECTORY ... data ...)` is a plain (non
+    # --symlink-install) copy, so mounting over the source path is inert --
+    # neither node ever reads or writes there.
     volumes:
-      - ../data:/ws/src/LearningMPC/lmpc_ros2/data
+      - ../data:/ws/install/lmpc_ros2/share/lmpc_ros2/data
     command: ["ros2", "launch", "lmpc_ros2", "lmpc.launch.py"]
 
   # Generates a fresh initial safe set (README.md Section 3) -- NOT started
@@ -66,7 +74,8 @@ services:
     profiles: ["seed"]
     # Bind-mounted for the same reason as `lmpc` above -- this is the write
     # side: without it, the CSV this writes is lost the moment the
-    # container exits (`run --rm`), never reaching `lmpc`'s container.
+    # container exits (`run --rm`), never reaching `lmpc`'s container. Same
+    # install-vs-source path note as `lmpc` above applies here too.
     volumes:
-      - ../data:/ws/src/LearningMPC/lmpc_ros2/data
+      - ../data:/ws/install/lmpc_ros2/share/lmpc_ros2/data
     command: ["ros2", "launch", "lmpc_ros2", "pure_pursuit.launch.py"]
