@@ -104,8 +104,19 @@ public:
 
         if(last_space > space) {
             centerline_points.push_back(p_second_last);
+            centerline_points.push_back(p_last);
         }
-        centerline_points.push_back(p_last);   //close the loop
+        else if (last_space > 1e-6) {
+            centerline_points.push_back(p_last);
+        }
+        // else: the recorded path already closes exactly (last waypoint ==
+        // first waypoint, e.g. gold_conference_room), so
+        // centerline_points.back() already sits at p_last's location and
+        // theta. Pushing p_last here too would duplicate that theta exactly
+        // -- a zero-length spline interval -- and tk::spline's tridiagonal
+        // solve divides by that interval's length, poisoning EVERY
+        // coefficient with NaN (not just near this point) via
+        // back-substitution. Skip the duplicate; the loop is already closed.
 
         vector<double> X;
         vector<double> Y;
