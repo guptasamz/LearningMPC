@@ -21,7 +21,7 @@ lmpc_node:
     ACCELERATION_MAX: 9.51
     DECELERATION_MAX: 9.51
     VEL_THRESHOLD: 0.8
-    MAP_MARGIN: 0.45
+    MAP_MARGIN: 0.2
     # Ceiling on the track half-width the controller believes it has
     # wherever Track::initialize_width()'s wall search can't find a wall
     # nearby. 0.8 is sized for wide purpose-built tracks (barc_oval) -- for
@@ -30,7 +30,7 @@ lmpc_node:
     # track_half_width_max argument (see docker-compose.yml), not here --
     # this default is shared across every track unless overridden per-run.
     track_half_width_max: 0.8
-    WAYPOINT_SPACE: 0.2
+    WAYPOINT_SPACE: 0.3
     # Matches f1tenth_gym_jl's R_ACCEL/R_STEER for barc_oval at this same
     # N/Ts -- tuned as a set together with the horizon/timestep above, so
     # ported together rather than left at the old N=25/Ts=0.05-era values.
