@@ -22,7 +22,7 @@ services:
               capabilities: [gpu]
     command: ["ros2", "launch", "f1tenth_gym_ros", "gym_bridge_launch.py"]
 
-  # Real particle filter (vendored at lmpc_ros2/third_party/syn_pf_cpp, same
+  # Real particle filter (vendored at third_party/syn_pf_cpp, same
   # source that runs on the real car -- see UPSTREAMS.md's ForzaETH/
   # particle_filter entry there) running against gym_bridge's SIMULATED
   # lidar/map/odom, publishing a genuinely PF-estimated /tracked_pose. This

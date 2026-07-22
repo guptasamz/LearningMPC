@@ -89,7 +89,7 @@ docker compose -f lmpc_ros2/docker/docker-compose.yml up
 This starts three services:
 
 - `sim`: `f1tenth_gym_ros`, RViz, map server, `/ego_racecar/odom`, `/map`.
-- `pf`: `syn_pf_cpp` (vendored at `lmpc_ros2/third_party/syn_pf_cpp` -- the same particle filter that runs on the real car, see `UPSTREAMS.md`'s `ForzaETH/particle_filter` entry there) running against `sim`'s simulated lidar/map/odom, publishing a genuinely PF-estimated `/tracked_pose`.
+- `pf`: `syn_pf_cpp` (vendored at `third_party/syn_pf_cpp` -- the same particle filter that runs on the real car, see `UPSTREAMS.md`'s `ForzaETH/particle_filter` entry there) running against `sim`'s simulated lidar/map/odom, publishing a genuinely PF-estimated `/tracked_pose`.
 - `lmpc`: `lmpc_node`, default `gold_conference_room` track, publishes `/drive`.
 
 `lmpc` runs with `pose_source:=pf` by default -- it takes `x/y/yaw` from `pf`'s `/tracked_pose` and reconstructs `omega`/`beta` by finite-differencing consecutive PF samples, exactly the state-reconstruction path the real car uses (see Section 1), instead of trusting `sim`'s ground-truth twist directly. This means a clean sim run actually exercises the same code path -- and the same PF-driven noise/lag characteristics -- you'll get on the real car, not an artificially perfect one. Same pattern as `f1tenth_ws`'s own `run_verify_real_in_sim.sh`.
@@ -119,7 +119,7 @@ docker compose -f lmpc_ros2/docker/docker-compose.yml \
 
 The directory must contain both `<track_name>_waypoints.csv` and `<track_name>_initial_safe_set.csv`.
 
-Note: `pf`'s config (`lmpc_ros2/third_party/syn_pf_cpp/config/synpf_cpp_params.yaml`) has `gold_conference_room`'s start pose hardcoded (`initial_pose_x/y/theta`) -- for a different track, edit that file (or rebuild with an overriding config) to match, or the PF may fail to converge or lock onto the wrong location.
+Note: `pf`'s config (`third_party/syn_pf_cpp/config/synpf_cpp_params.yaml`) has `gold_conference_room`'s start pose hardcoded (`initial_pose_x/y/theta`) -- for a different track, edit that file (or rebuild with an overriding config) to match, or the PF may fail to converge or lock onto the wrong location.
 
 ### 2.3 Simulation Checks
 

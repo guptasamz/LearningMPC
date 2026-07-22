@@ -91,7 +91,7 @@ RUN set -eux; \
 # executable can actually load at runtime.
 RUN echo "/ws/src/LearningMPC/src_gym/deps/lib" > /etc/ld.so.conf.d/lmpc-deps.conf && ldconfig
 
-# range_libc: the raycasting library lmpc_ros2/third_party/syn_pf_cpp needs
+# range_libc: the raycasting library third_party/syn_pf_cpp needs
 # (header-only + one vendored lodepng.cpp -- not a ROS/colcon package itself,
 # so it lives outside /ws/src rather than being scanned as one). This image
 # has no CUDA toolkit, so syn_pf_cpp is built with -DWITH_CUDA=OFF below --

@@ -111,9 +111,10 @@ install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(PROGRAMS
-  scripts/compare_pf_node.py
-  DESTINATION lib/${PROJECT_NAME}
-)
+# scripts/compare_pf_node.py (upstream's Python-PF comparison/debug tool)
+# intentionally not vendored here -- not needed for this package's sim/real
+# usage. Upstream's own install(PROGRAMS scripts/compare_pf_node.py ...)
+# rule is dropped to match (it would otherwise fail cmake --install with a
+# missing-file error, since the referenced script doesn't exist in this tree).
 
 ament_package()
