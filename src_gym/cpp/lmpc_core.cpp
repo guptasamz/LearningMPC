@@ -262,6 +262,30 @@ public:
         return out;
     }
 
+    // Forward-roll one step through the SAME dynamics model/linearization
+    // solve_MPC uses (get_linearized_dynamics(), evaluated exactly at the
+    // given operating point -- an affine model whose value at its own
+    // linearization point reproduces the true continuous dynamics there, so
+    // this is the exact one-step ZOH-discretized propagation, not merely an
+    // approximation). Used by lmpc_ros2's pose_source=pf state reconstruction
+    // to project a finite-diff beta estimate (computed over the PREVIOUS
+    // control step, so lagging by ~one step) forward to the current time --
+    // port of f1tenth_ws's DA_MCTS_sim/node.py::_odom_cb, which does the same
+    // projection via its own MCTS tree's step_dynamics(). use_dyn selects
+    // which branch (kinematic vs single-track dynamic) exactly like the
+    // controller's own use_dyn_ state-machine would -- callers should pass
+    // that current mode (see use_dyn()), not necessarily recompute it.
+    double predict_beta(double x, double y, double yaw, double v,
+                         double omega, double beta, double accel,
+                         double steer, bool use_dyn){
+        Matrix<double,nx,1> x_op; x_op << x, y, yaw, v, omega, beta;
+        Matrix<double,nu,1> u_op; u_op << accel, steer;
+        Matrix<double,nx,nx> Ad; Matrix<double,nx,nu> Bd; Matrix<double,nx,1> hd;
+        get_linearized_dynamics(Ad, Bd, hd, x_op, u_op, use_dyn);
+        Matrix<double,nx,1> x_next = Ad*x_op + Bd*u_op + hd;
+        return x_next(5);
+    }
+
 private:
     /*Paramaters*/
     CarParams car;

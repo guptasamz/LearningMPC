@@ -20,18 +20,23 @@ This package does not launch the real vehicle stack, localization, VESC bridge, 
 
 `lmpc_node` expects these ROS interfaces:
 
-- `pose_topic`: `nav_msgs/msg/Odometry`, vehicle pose and twist used by LMPC.
+- `pose_topic`: `nav_msgs/msg/Odometry`. Meaning depends on `pose_source` (default `odom`): pose AND twist directly (the sim case), or (`pose_source:=pf`) only its `|v|` — see below.
 - `map_topic`: `nav_msgs/msg/OccupancyGrid`, transient-local map, read once at startup.
 - `drive_topic`: `ackermann_msgs/msg/AckermannDriveStamped`, command output.
 
 Default simulation topics are handled by the launch files. On the real car, pass the actual topic names explicitly.
 
+**Real localization publishing `PoseStamped`, not `Odometry`** (e.g. `syn_pf_cpp`'s `/tracked_pose`): set `pose_source:=pf` and `pf_pose_topic:=<that topic>`. `lmpc_node` then takes `x, y, yaw` from `pf_pose_topic`, reconstructs `omega`/`beta` (slip angle) by finite-differencing consecutive PF samples, and takes only `|v|` from `pose_topic`'s `Odometry` twist (real wheel-odometry `vy`/yaw-rate are typically unmeasured — see `vesc_to_odom`'s hardcoded `twist.linear.y = 0` and its no-slip kinematic `angular.z` formula, neither a real measurement of lateral slip). This is a straight port of `f1tenth_ws`'s `DA_MCTS_sim/node.py::_odom_cb`, already validated on this car's real hardware. See `lmpc_node.cpp`'s `reconstruct_from_pf()`.
+
+The `beta` half of that estimate (finite-diff, then projected one step forward through the controller's own dynamics model — see `predict_beta()`) is noisier than `omega`'s, since it differentiates a discretely-sampled pose signal rather than reading a rate directly, so it's opt-in: `beta` is pinned to exactly `0` unconditionally by default. Pass `slip_angle_estimation:=true` to enable the estimate instead; `omega` is unaffected either way.
+
 Typical real-car mapping from the F1TENTH stack:
 
 ```text
-localization/PF -> /tracked_pose or /pf/pose/odom -> pose_topic
-map_server      -> /map                         -> map_topic
-lmpc_node       -> /drive                       -> ackermann_mux / VESC bridge
+localization/PF (syn_pf_cpp) -> /tracked_pose -> pf_pose_topic (pose_source:=pf)
+wheel odometry (vesc_to_odom) -> /odom        -> pose_topic (|v| only, in pf mode)
+map_server                    -> /map         -> map_topic
+lmpc_node                     -> /drive       -> ackermann_mux / VESC bridge
 ```
 
 ## 2. Docker Simulation
@@ -81,10 +86,13 @@ Start the simulator and LMPC:
 docker compose -f lmpc_ros2/docker/docker-compose.yml up
 ```
 
-This starts two services:
+This starts three services:
 
 - `sim`: `f1tenth_gym_ros`, RViz, map server, `/ego_racecar/odom`, `/map`.
+- `pf`: `syn_pf_cpp` (vendored at `lmpc_ros2/third_party/syn_pf_cpp` -- the same particle filter that runs on the real car, see `UPSTREAMS.md`'s `ForzaETH/particle_filter` entry there) running against `sim`'s simulated lidar/map/odom, publishing a genuinely PF-estimated `/tracked_pose`.
 - `lmpc`: `lmpc_node`, default `gold_conference_room` track, publishes `/drive`.
+
+`lmpc` runs with `pose_source:=pf` by default -- it takes `x/y/yaw` from `pf`'s `/tracked_pose` and reconstructs `omega`/`beta` by finite-differencing consecutive PF samples, exactly the state-reconstruction path the real car uses (see Section 1), instead of trusting `sim`'s ground-truth twist directly. This means a clean sim run actually exercises the same code path -- and the same PF-driven noise/lag characteristics -- you'll get on the real car, not an artificially perfect one. Same pattern as `f1tenth_ws`'s own `run_verify_real_in_sim.sh`.
 
 Run in the background with:
 
@@ -99,16 +107,19 @@ Stop with:
 docker compose -f lmpc_ros2/docker/docker-compose.yml down
 ```
 
-Custom track example:
+Custom track example (note: overriding the whole command like this replaces `lmpc`'s default `pose_source:=pf`, so it's repeated explicitly here -- drop it to fall back to sim ground truth instead):
 
 ```bash
 docker compose -f lmpc_ros2/docker/docker-compose.yml \
   run --rm -v /host/path/to/track:/host/path/to/track lmpc \
   ros2 launch lmpc_ros2 lmpc.launch.py \
-  track_dir:=/host/path/to/track track_name:=my_track
+  track_dir:=/host/path/to/track track_name:=my_track \
+  pose_source:=pf pf_pose_topic:=/tracked_pose
 ```
 
 The directory must contain both `<track_name>_waypoints.csv` and `<track_name>_initial_safe_set.csv`.
+
+Note: `pf`'s config (`lmpc_ros2/third_party/syn_pf_cpp/config/synpf_cpp_params.yaml`) has `gold_conference_room`'s start pose hardcoded (`initial_pose_x/y/theta`) -- for a different track, edit that file (or rebuild with an overriding config) to match, or the PF may fail to converge or lock onto the wrong location.
 
 ### 2.3 Simulation Checks
 
@@ -192,7 +203,7 @@ ros2 topic echo --once /map
 ros2 topic list | grep -E 'tracked_pose|pf|odom'
 ```
 
-Choose the localization odometry topic you will pass as `pose_topic`. This package expects `nav_msgs/msg/Odometry`; if your PF publishes `geometry_msgs/msg/PoseStamped` only, add/launch a relay to odometry or adapt `lmpc_node`.
+Choose the localization topic(s) you will pass: `pose_topic` (wheel odometry, e.g. `/odom`) and, if your PF publishes `geometry_msgs/msg/PoseStamped` (e.g. `syn_pf_cpp`'s `/tracked_pose`) rather than `nav_msgs/msg/Odometry`, also `pose_source:=pf` and `pf_pose_topic` (see Section 1). Both `lmpc_node` and `pure_pursuit_node` (Section 3.3, below) support this split.
 
 ### 3.3 Seed A Real-Venue Safe Set
 
@@ -202,12 +213,13 @@ Bench test first with wheels off the ground. Then run slowly:
 
 ```bash
 ros2 launch lmpc_ros2 pure_pursuit.launch.py \
-  pose_topic:=/pf/pose/odom \
+  pose_topic:=/odom \
   drive_topic:=/drive \
   track_dir:=/path/to/venue \
   track_name:=venue \
   max_speed:=1.0
 ```
+`pose_topic` here must be a real `nav_msgs/msg/Odometry` topic (`pure_pursuit_node` has no `pose_source:=pf` option) -- typically the vehicle's own wheel odometry (e.g. `/odom` from `vesc_to_odom_node`), not the PF.
 
 Wait for the log message that it wrote the safe set and is shutting down. The venue directory must contain `<track_name>_centerline.csv`.
 
@@ -217,21 +229,24 @@ With vehicle stack, map server, localization, and safe set ready:
 
 ```bash
 ros2 launch lmpc_ros2 lmpc.launch.py \
-  pose_topic:=/pf/pose/odom \
+  pose_source:=pf \
+  pose_topic:=/odom \
+  pf_pose_topic:=/tracked_pose \
   map_topic:=/map \
   drive_topic:=/drive \
   track_dir:=/path/to/venue \
   track_name:=venue
 ```
 
-If your stack publishes localization somewhere else, replace `/pf/pose/odom` with that topic.
+If your stack publishes localization or wheel odometry somewhere else, replace `/tracked_pose`/`/odom` with those topics. If your PF instead publishes `nav_msgs/msg/Odometry` directly (no separate wheel-odometry topic needed), use `pose_source:=odom` (the default) with `pose_topic` pointed straight at it -- same as the sim case.
 
 Real-car checks:
 
 ```bash
 ros2 topic hz /drive
 ros2 topic echo /drive
-ros2 topic hz /pf/pose/odom
+ros2 topic hz /tracked_pose
+ros2 topic hz /odom
 ```
 
 Keep the joystick override active. Stop immediately if `/drive` commands are stale, sign-flipped, saturated, or semantically wrong for the VESC bridge.

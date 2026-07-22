@@ -91,6 +91,15 @@ RUN set -eux; \
 # executable can actually load at runtime.
 RUN echo "/ws/src/LearningMPC/src_gym/deps/lib" > /etc/ld.so.conf.d/lmpc-deps.conf && ldconfig
 
+# range_libc: the raycasting library lmpc_ros2/third_party/syn_pf_cpp needs
+# (header-only + one vendored lodepng.cpp -- not a ROS/colcon package itself,
+# so it lives outside /ws/src rather than being scanned as one). This image
+# has no CUDA toolkit, so syn_pf_cpp is built with -DWITH_CUDA=OFF below --
+# range_libc's CPU raycasting methods (cddt, the one actually selected, is
+# its own declared default) are its primary implementation, not a degraded
+# fallback; only the GPU-only rmgpu method needs CUDA.
+RUN git clone --depth 1 https://github.com/kctess5/range_libc.git /ws/deps/range_libc
+
 # f1tenth_gym (vendored at LearningMPC/f1tenth_gym) needs the legacy-pip
 # dance documented in requirements.txt's comments -- gym==0.19.0 has
 # metadata pip>=24.1 rejects. transforms3d is f1tenth_gym_ros's own
@@ -108,9 +117,13 @@ RUN apt-get update && \
     rosdep install --from-paths src --ignore-src -r -y --skip-keys="gym f1tenth_gym" && \
     rm -rf /var/lib/apt/lists/*
 
+# -DWITH_CUDA=OFF/-DRANGELIB_ROOT only mean anything to syn_pf_cpp's own
+# CMakeLists.txt -- harmless unused cache variables for the other two
+# packages in this same colcon invocation.
 RUN . /opt/ros/humble/setup.bash && \
-    colcon build --packages-select f1tenth_gym_ros lmpc_ros2 \
-      --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    colcon build --packages-select f1tenth_gym_ros lmpc_ros2 syn_pf_cpp \
+      --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                   -DWITH_CUDA=OFF -DRANGELIB_ROOT=/ws/deps/range_libc
 
 COPY lmpc_ros2/docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

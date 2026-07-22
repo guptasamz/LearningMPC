@@ -11,9 +11,13 @@ see ../README.md Section 3):
     ros2 launch lmpc_ros2 pure_pursuit.launch.py \\
         track_dir:=/path/to/your/track_dir track_name:=my_track
 
-Real car:
+Real car. pose_source defaults to "odom" (trust pose_topic's Odometry
+pose+v directly, the sim behavior) -- set it to "pf" to instead take x/y/yaw
+from a PoseStamped particle-filter topic (pf_pose_topic), with pose_topic
+then only used for its |v|. Same split lmpc.launch.py uses:
     ros2 launch lmpc_ros2 pure_pursuit.launch.py \\
-        pose_topic:=/pf/pose/odom track_dir:=/path/to/venue track_name:=venue
+        pose_source:=pf pose_topic:=/odom pf_pose_topic:=/tracked_pose \\
+        track_dir:=/path/to/venue track_name:=venue
 
 max_speed defaults from config/lmpc_params.yaml (self-contained under this
 package) -- pass max_speed:=<value> explicitly to override it for a one-off
@@ -45,6 +49,8 @@ def launch_setup(context, *args, **kwargs):
 
     overrides = {
         "pose_topic": LaunchConfiguration("pose_topic"),
+        "pose_source": LaunchConfiguration("pose_source"),
+        "pf_pose_topic": LaunchConfiguration("pf_pose_topic"),
         "drive_topic": LaunchConfiguration("drive_topic"),
         "centerline_csv": os.path.join(track_dir, f"{track_name}_centerline.csv"),
         "output_csv": os.path.join(track_dir, f"{track_name}_initial_safe_set.csv"),
@@ -67,7 +73,20 @@ def launch_setup(context, *args, **kwargs):
 def generate_launch_description():
     pose_topic_arg = DeclareLaunchArgument(
         "pose_topic", default_value="/ego_racecar/odom",
-        description="Odometry topic to drive from (real car: e.g. /pf/pose/odom)",
+        description="Odometry topic. pose_source=odom (default): supplies "
+                     "pose AND v directly. pose_source=pf: only its |v| is "
+                     "used -- x/y/yaw come from pf_pose_topic instead.",
+    )
+    pose_source_arg = DeclareLaunchArgument(
+        "pose_source", default_value="odom",
+        description="'odom' (default, sim-compatible): trust pose_topic's "
+                     "Odometry pose+v directly. 'pf' (real car): x/y/yaw "
+                     "from pf_pose_topic (PoseStamped) instead.",
+    )
+    pf_pose_topic_arg = DeclareLaunchArgument(
+        "pf_pose_topic", default_value="/tracked_pose",
+        description="PoseStamped particle-filter output (e.g. syn_pf_cpp's "
+                     "/tracked_pose). Only read when pose_source:=pf.",
     )
     drive_topic_arg = DeclareLaunchArgument(
         "drive_topic", default_value="/drive",
@@ -97,6 +116,8 @@ def generate_launch_description():
 
     return LaunchDescription([
         pose_topic_arg,
+        pose_source_arg,
+        pf_pose_topic_arg,
         drive_topic_arg,
         track_dir_arg,
         track_name_arg,

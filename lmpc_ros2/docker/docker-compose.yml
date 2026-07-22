@@ -22,6 +22,25 @@ services:
               capabilities: [gpu]
     command: ["ros2", "launch", "f1tenth_gym_ros", "gym_bridge_launch.py"]
 
+  # Real particle filter (vendored at lmpc_ros2/third_party/syn_pf_cpp, same
+  # source that runs on the real car -- see UPSTREAMS.md's ForzaETH/
+  # particle_filter entry there) running against gym_bridge's SIMULATED
+  # lidar/map/odom, publishing a genuinely PF-estimated /tracked_pose. This
+  # is what lets `lmpc` (below) run with pose_source:=pf by default in sim --
+  # exercising the exact same state-reconstruction path (lmpc_node's
+  # reconstruct_from_pf()) the real car uses, not sim ground truth. Same
+  # pattern as f1tenth_ws's own run_verify_real_in_sim.sh.
+  pf:
+    build:
+      context: ../..
+      dockerfile: lmpc_ros2/docker/Dockerfile
+    image: learningmpc-ros2:humble
+    environment:
+      - ROS_DOMAIN_ID=42
+    depends_on:
+      - sim
+    command: ["ros2", "launch", "syn_pf_cpp", "synpf_cpp_launch.py"]
+
   lmpc:
     build:
       context: ../..
@@ -31,6 +50,7 @@ services:
       - ROS_DOMAIN_ID=42
     depends_on:
       - sim
+      - pf
     # No track_name override -- lmpc.launch.py's own default is
     # gold_conference_room. For a different track: `run --rm lmpc ros2
     # launch lmpc_ros2 lmpc.launch.py track_name:=... track_dir:=...`
@@ -60,7 +80,14 @@ services:
     # would just needlessly under-cut legitimate width wherever the ray
     # search correctly finds nothing nearby. Kept at lmpc_params.yaml's
     # shared 0.8m default.
-    command: ["ros2", "launch", "lmpc_ros2", "lmpc.launch.py"]
+    #
+    # pose_source:=pf -- sim now runs through the same state-reconstruction
+    # path (x/y/yaw from the `pf` service's /tracked_pose, finite-diff
+    # omega/beta) as the real car, instead of trusting gym_bridge's ground-
+    # truth twist directly. pose_topic stays /ego_racecar/odom, now used only
+    # for its |v|.
+    command: ["ros2", "launch", "lmpc_ros2", "lmpc.launch.py",
+              "pose_source:=pf", "pf_pose_topic:=/tracked_pose"]
 
   # Generates a fresh initial safe set (README.md Section 3) -- NOT started
   # by plain `up`: it drives the car itself and would fight `lmpc` for
@@ -80,6 +107,7 @@ services:
       - ROS_DOMAIN_ID=42
     depends_on:
       - sim
+      - pf
     profiles: ["seed"]
     # Bind-mounted for the same reason as `lmpc` above -- this is the write
     # side: without it, the CSV this writes is lost the moment the
@@ -87,4 +115,9 @@ services:
     # install-vs-source path note as `lmpc` above applies here too.
     volumes:
       - ../data:/ws/install/lmpc_ros2/share/lmpc_ros2/data
-    command: ["ros2", "launch", "lmpc_ros2", "pure_pursuit.launch.py"]
+    # pose_source:=pf -- same reasoning as `lmpc` above: the recorded safe
+    # set should reflect driving off the same PF-reconstructed state
+    # (x/y/yaw from `pf`'s /tracked_pose, |v| from odom) the real car will
+    # actually use, not sim ground truth.
+    command: ["ros2", "launch", "lmpc_ros2", "pure_pursuit.launch.py",
+              "pose_source:=pf", "pf_pose_topic:=/tracked_pose"]

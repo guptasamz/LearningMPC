@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 find_package(ackermann_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 
@@ -50,6 +51,7 @@ target_link_libraries(lmpc_node
 ament_target_dependencies(lmpc_node
   rclcpp
   nav_msgs
+  geometry_msgs
   ackermann_msgs
   ament_index_cpp
 )
@@ -69,6 +71,7 @@ target_include_directories(pure_pursuit_node PRIVATE include)
 ament_target_dependencies(pure_pursuit_node
   rclcpp
   nav_msgs
+  geometry_msgs
   ackermann_msgs
 )
 target_compile_options(pure_pursuit_node PRIVATE

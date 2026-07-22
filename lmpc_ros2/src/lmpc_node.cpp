@@ -68,6 +68,27 @@ LmpcNode::LmpcNode() : rclcpp::Node("lmpc_node") {
   waypoint_csv_ = this->declare_parameter<std::string>("waypoint_csv", "");
   init_safe_set_csv_ = this->declare_parameter<std::string>("init_safe_set_csv", "");
   reg_warmstart_csv_ = this->declare_parameter<std::string>("reg_warmstart_csv", "");
+  // pose_source: "odom" (default) is the existing sim-compatible behavior --
+  // pose_topic_'s Odometry message supplies pose AND twist directly. "pf" is
+  // for the real car: pose_topic_ is then just the wheel-odometry topic
+  // (only its |v| is used), and pf_pose_topic_ (a PoseStamped particle-
+  // filter output, e.g. syn_pf_cpp's /tracked_pose) supplies x/y/yaw, with
+  // omega/beta reconstructed by finite-differencing consecutive PF samples
+  // -- see reconstruct_from_pf(). Ported from f1tenth_ws's
+  // DA_MCTS_sim/node.py::_odom_cb (validated on this car's real hardware),
+  // minus its one-step model-based de-lag refinement on beta.
+  pose_source_ = this->declare_parameter<std::string>("pose_source", "odom");
+  pf_pose_topic_ = this->declare_parameter<std::string>("pf_pose_topic", "/tracked_pose");
+  if (pose_source_ != "odom" && pose_source_ != "pf") {
+    throw std::runtime_error(
+        "lmpc_ros2: pose_source must be 'odom' or 'pf', got: " + pose_source_);
+  }
+  // pose_source=pf only: the finite-diff + model-projection beta estimate
+  // (reconstruct_from_pf/predict_beta) is inherently noisy. Default false
+  // pins beta to exactly 0 unconditionally instead -- omega is unaffected
+  // either way; set true to opt into the estimate.
+  slip_angle_estimation_ =
+      this->declare_parameter<bool>("slip_angle_estimation", false);
   // Optional: a TUM-style <track>_centerline.csv (x, y, w_tr_right,
   // w_tr_left) caps Track::initialize_width()'s ray-marched half-widths at
   // the designed track width wherever the ray would otherwise escape
@@ -140,6 +161,16 @@ LmpcNode::LmpcNode() : rclcpp::Node("lmpc_node") {
       pose_topic_, rclcpp::SensorDataQoS(),
       std::bind(&LmpcNode::odom_callback, this, std::placeholders::_1));
 
+  if (pose_source_ == "pf") {
+    pf_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+        pf_pose_topic_, rclcpp::SensorDataQoS(),
+        std::bind(&LmpcNode::pf_pose_callback, this, std::placeholders::_1));
+    RCLCPP_INFO(this->get_logger(),
+                "lmpc_ros2: pose_source=pf -- x/y/yaw/omega/beta reconstructed "
+                "from '%s' (finite-diff), |v| from '%s' twist",
+                pf_pose_topic_.c_str(), pose_topic_.c_str());
+  }
+
   drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
       drive_topic_, 10);
 
@@ -191,6 +222,15 @@ void LmpcNode::build_controller(const nav_msgs::msg::OccupancyGrid &map_msg) {
 }
 
 void LmpcNode::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+  if (pose_source_ == "pf") {
+    // pf mode: this topic supplies ONLY |v| here -- x/y/yaw/omega/beta all
+    // come from pf_pose_callback instead. hypot() degrades gracefully to
+    // |linear.x| when linear.y is the usual real-odometry hardcoded 0 (see
+    // vesc_to_odom's twist.linear.y=0, twist.angular.z=no-slip-kinematic-
+    // formula-not-a-measurement -- the reason pose_source=pf exists at all).
+    odom_speed_ = std::hypot(msg->twist.twist.linear.x, msg->twist.twist.linear.y);
+    return;
+  }
   x_ = msg->pose.pose.position.x;
   y_ = msg->pose.pose.position.y;
   yaw_ = yaw_from_quaternion(
@@ -203,6 +243,135 @@ void LmpcNode::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
   vy_ = msg->twist.twist.linear.y;
   yawdot_ = msg->twist.twist.angular.z;
   have_state_ = true;
+}
+
+void LmpcNode::pf_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
+  const double t = rclcpp::Time(msg->header.stamp).seconds();
+  const double x = msg->pose.position.x;
+  const double y = msg->pose.position.y;
+  const double yaw = yaw_from_quaternion(
+      msg->pose.orientation.x, msg->pose.orientation.y,
+      msg->pose.orientation.z, msg->pose.orientation.w);
+
+  const PfReconstruction r = reconstruct_from_pf(t, x, y, yaw);
+  if (!r.ok) {
+    return;  // building history, not enough PF samples yet
+  }
+
+  // slip_angle_estimation_ == false: skip the estimate entirely, beta is
+  // pinned to exactly 0 unconditionally (see the member's doc comment --
+  // this signal is inherently noisy; omega is unaffected either way).
+  double beta = 0.0;
+  if (slip_angle_estimation_) {
+    // One-step model-based de-lag: r.beta is the finite-diff estimate taken
+    // over [ref, now], i.e. it's really the AVERAGE beta over the PREVIOUS
+    // control step, lagging "now" by about half a step. Forward-roll it
+    // through the controller's own dynamics (same model solve_MPC
+    // linearizes around) from the reference sample to project a
+    // model-consistent estimate at the current time -- same correction
+    // DA_MCTS_sim's _odom_cb applies via its own dynamics stepper. Falls
+    // back to the raw finite-diff value before core_ exists (no
+    // map/controller yet) or if the projection throws, matching
+    // DA_MCTS_sim's try/except fallback.
+    beta = r.beta;
+    if (core_) {
+      try {
+        // predict_beta divides by v in the dynamic-model branch (yaw-rate/
+        // slip-angle terms) -- near-zero r.ref_v produces NaN rather than a
+        // C++ exception, so check finiteness explicitly, not just catch().
+        const double projected = core_->predict_beta(
+            r.ref_x, r.ref_y, r.ref_yaw, r.ref_v, r.omega, r.beta,
+            last_accel_cmd_, last_steer_cmd_, core_->use_dyn());
+        if (std::isfinite(projected)) {
+          beta = projected;
+        }
+      } catch (const std::exception &) {
+        beta = r.beta;
+      }
+    }
+  }
+
+  // |v| from the trustworthy wheel-speed twist (odom_speed_, updated by
+  // odom_callback); DIRECTION (beta) and omega from the PF finite-diff --
+  // wheel encoders alone can't see lateral slip at all, but they're a much
+  // lower-noise speed source than differentiating PF positions would be.
+  // set_state() below re-derives |v|=hypot(vx,vy) and beta=atan2(vy,vx)
+  // from these two components, so reconstruct them from odom_speed_ and
+  // beta here rather than passing the finite-diff's own (noisier) magnitude.
+  x_ = x;
+  y_ = y;
+  yaw_ = yaw;
+  vx_ = odom_speed_ * std::cos(beta);
+  vy_ = odom_speed_ * std::sin(beta);
+  yawdot_ = r.omega;
+  have_state_ = true;
+}
+
+LmpcNode::PfReconstruction LmpcNode::reconstruct_from_pf(double t, double x, double y,
+                                                           double yaw) {
+  PfReconstruction r;
+
+  // Reset detection: a large jump (PF relocalization / RViz "2D Pose
+  // Estimate") would otherwise show up as a nonsense velocity spike --
+  // clear history and start over. Same 5m guard as f1tenth_ws's
+  // DA_MCTS_sim/node.py::_odom_cb.
+  if (!pf_history_.empty()) {
+    const auto &last = pf_history_.back();
+    if (std::hypot(x - last.x, y - last.y) > 5.0) {
+      RCLCPP_WARN(this->get_logger(),
+                  "pf pose jumped > 5m -- clearing state-reconstruction history");
+      pf_history_.clear();
+    }
+  }
+
+  pf_history_.push_back({t, x, y, yaw});
+  while (pf_history_.size() > kPfHistoryMax) {
+    pf_history_.pop_front();
+  }
+  if (pf_history_.size() < 2) {
+    return r;  // r.ok stays false
+  }
+
+  // Reference sample ~one control step (Ts_) before now, nearest by time --
+  // same lookup DA_MCTS_sim uses over its own pose history.
+  const double target_t = t - Ts_;
+  const PfSample *ref = &pf_history_.front();
+  double best_dt = std::abs(ref->t - target_t);
+  for (const auto &s : pf_history_) {
+    const double dt = std::abs(s.t - target_t);
+    if (dt < best_dt) {
+      best_dt = dt;
+      ref = &s;
+    }
+  }
+  r.ref_x = ref->x;
+  r.ref_y = ref->y;
+  r.ref_yaw = ref->yaw;
+
+  const double actual_dt = t - ref->t;
+  const bool pos_changed = std::abs(x - ref->x) > 1e-9 || std::abs(y - ref->y) > 1e-9;
+  const bool dt_ok = actual_dt >= Ts_ * 0.5 && actual_dt <= Ts_ * 1.5;
+  if (!pos_changed || !dt_ok) {
+    r.ok = true;  // beta/omega/ref_v stay 0
+    return r;
+  }
+
+  // Finite-diff over PF positions, rotated into the body frame at the
+  // reference sample's heading -- captures true world-frame motion
+  // including the slip-induced lateral component, which is what makes beta
+  // observable at all (wheel-encoder-only odometry cannot see it).
+  const double x_dot = (x - ref->x) / Ts_;
+  const double y_dot = (y - ref->y) / Ts_;
+  const double vx_b = x_dot * std::cos(ref->yaw) + y_dot * std::sin(ref->yaw);
+  const double vy_b = -x_dot * std::sin(ref->yaw) + y_dot * std::cos(ref->yaw);
+  r.ref_v = std::hypot(vx_b, vy_b);
+  // Zero beta below this speed -- matches DA_MCTS_sim's own threshold,
+  // avoids atan2 amplifying position noise into a wild heading angle when
+  // the car is nearly stationary.
+  r.beta = (r.ref_v > 0.05) ? std::atan2(vy_b, vx_b) : 0.0;
+  r.omega = (yaw - ref->yaw) / Ts_;
+  r.ok = true;
+  return r;
 }
 
 void LmpcNode::control_tick() {
@@ -233,6 +402,14 @@ void LmpcNode::control_tick() {
                           "QP solve failed -- reapplying previous control "
                           "(LMPCCore's own fallback, not an error state)");
   }
+
+  // Tracked for pose_source=pf's beta one-step de-lag correction (see
+  // reconstruct_from_pf/predict_beta) -- the action actually applied over
+  // the most recent control step, regardless of whether this step's solve
+  // itself succeeded (result.accel/steer already reflect LMPCCore's own
+  // solved-vs-fallback choice).
+  last_accel_cmd_ = result.accel;
+  last_steer_cmd_ = result.steer;
 
   // f1tenth_gym's vehicle model (base_classes.py's RaceCar::update_pose(),
   // patched for this project -- see its "accl = vel" line/comment) treats

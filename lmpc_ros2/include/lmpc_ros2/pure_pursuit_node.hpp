@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 
@@ -26,16 +27,26 @@ public:
 
 private:
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
+  void pf_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
   void control_tick();
   void finish();  // shut down, once the stop-command grace period has elapsed
 
   // -- ROS I/O --
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pf_pose_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
 
   // -- config (params) --
   std::string pose_topic_;
+  // "odom" (default, sim-compatible): pose_topic_'s Odometry supplies pose
+  // AND v directly, unchanged from before. "pf" (real car): x/y/yaw from a
+  // PoseStamped particle-filter topic (pf_pose_topic_); pose_topic_'s
+  // Odometry message is then only used for its |v|. Same split lmpc_node
+  // uses (see its reconstruct_from_pf/pose_source docs) minus the omega/
+  // beta finite-diff -- pure pursuit only ever needs x/y/yaw/v.
+  std::string pose_source_;
+  std::string pf_pose_topic_;
   std::string drive_topic_;
   std::string output_csv_;
   double max_speed_ = 0.0;
@@ -53,9 +64,15 @@ private:
   std::vector<double> dense_y_;
   double track_length_ = 0.0;
 
-  // -- live state, updated by odom_callback, consumed by control_tick --
+  // -- live state, updated by odom_callback/pf_pose_callback, consumed by
+  // control_tick --
   bool have_state_ = false;
   double x_ = 0.0, y_ = 0.0, yaw_ = 0.0, v_ = 0.0;
+
+  // pose_source_ == "pf": |v| from pose_topic_'s Odometry twist (hypot() with
+  // linear.y degrades gracefully to |linear.x| when linear.y is the usual
+  // real-odometry hardcoded 0). Combined with x/y/yaw from pf_pose_callback.
+  double odom_speed_ = 0.0;
 
   // -- recording state --
   std::ofstream out_file_;

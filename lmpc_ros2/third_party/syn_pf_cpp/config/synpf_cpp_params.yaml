@@ -1,0 +1,29 @@
+synpf_cpp:
+  ros__parameters:
+    pose_pub_topic: '/tracked_pose'
+    scan_topic: '/scan'
+    odometry_topic: '/ego_racecar/odom'
+    update_rate_hz: 50.0
+    trigger_on_scan: true
+
+    # cddt (CPU), not rmgpu (upstream's default here) -- this Docker image has
+    # no CUDA toolkit. cddt is syn_pf_cpp's own declared default and range_libc's
+    # primary (non-GPU) method, not a degraded fallback.
+    range_method: 'cddt'
+    theta_discretization: 150
+    max_particles: 2000
+
+    viz: false
+    publish_tf: false
+    max_viz_particles: 50
+    base_frame: 'ego_racecar/base_link'
+    odom_frame: 'odom'
+
+    # Match Python pf2_params_sim.yaml for validation parity
+    use_initial_pose: true
+    initial_pose_x: -3.46
+    initial_pose_y: -11.60
+    initial_pose_theta: 1.5707963
+    initial_var_x: 0.5
+    initial_var_y: 0.5
+    initial_var_theta: 0.4

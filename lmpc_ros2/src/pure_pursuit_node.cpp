@@ -83,6 +83,12 @@ constexpr int kConfirmedStopTicks = 40;      // ~1s at the default 0.025s contro
 
 PurePursuitNode::PurePursuitNode() : rclcpp::Node("pure_pursuit_node") {
   pose_topic_ = this->declare_parameter<std::string>("pose_topic", "/ego_racecar/odom");
+  pose_source_ = this->declare_parameter<std::string>("pose_source", "odom");
+  pf_pose_topic_ = this->declare_parameter<std::string>("pf_pose_topic", "/tracked_pose");
+  if (pose_source_ != "odom" && pose_source_ != "pf") {
+    throw std::runtime_error(
+        "pure_pursuit_node: pose_source must be 'odom' or 'pf', got: " + pose_source_);
+  }
   drive_topic_ = this->declare_parameter<std::string>("drive_topic", "/drive");
   const std::string centerline_csv =
       this->declare_parameter<std::string>("centerline_csv", "");
@@ -152,6 +158,15 @@ PurePursuitNode::PurePursuitNode() : rclcpp::Node("pure_pursuit_node") {
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
       pose_topic_, rclcpp::SensorDataQoS(),
       std::bind(&PurePursuitNode::odom_callback, this, std::placeholders::_1));
+  if (pose_source_ == "pf") {
+    pf_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+        pf_pose_topic_, rclcpp::SensorDataQoS(),
+        std::bind(&PurePursuitNode::pf_pose_callback, this, std::placeholders::_1));
+    RCLCPP_INFO(this->get_logger(),
+                "pure_pursuit_node: pose_source=pf -- x/y/yaw from '%s', |v| "
+                "from '%s' twist",
+                pf_pose_topic_.c_str(), pose_topic_.c_str());
+  }
   drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
       drive_topic_, 10);
   control_timer_ = this->create_wall_timer(
@@ -160,12 +175,31 @@ PurePursuitNode::PurePursuitNode() : rclcpp::Node("pure_pursuit_node") {
 }
 
 void PurePursuitNode::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+  if (pose_source_ == "pf") {
+    // pf mode: this topic supplies ONLY |v| here -- x/y/yaw come from
+    // pf_pose_callback instead. See lmpc_node.cpp's odom_callback for why
+    // (real /odom's twist.linear.y is typically hardcoded 0, so hypot()
+    // degrades gracefully to |linear.x|, the trustworthy wheel-speed
+    // reading).
+    odom_speed_ = std::hypot(msg->twist.twist.linear.x, msg->twist.twist.linear.y);
+    return;
+  }
   x_ = msg->pose.pose.position.x;
   y_ = msg->pose.pose.position.y;
   yaw_ = yaw_from_quaternion(
       msg->pose.pose.orientation.x, msg->pose.pose.orientation.y,
       msg->pose.pose.orientation.z, msg->pose.pose.orientation.w);
   v_ = msg->twist.twist.linear.x;
+  have_state_ = true;
+}
+
+void PurePursuitNode::pf_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
+  x_ = msg->pose.position.x;
+  y_ = msg->pose.position.y;
+  yaw_ = yaw_from_quaternion(
+      msg->pose.orientation.x, msg->pose.orientation.y,
+      msg->pose.orientation.z, msg->pose.orientation.w);
+  v_ = odom_speed_;
   have_state_ = true;
 }
 

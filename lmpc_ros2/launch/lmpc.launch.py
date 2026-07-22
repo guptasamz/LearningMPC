@@ -8,9 +8,17 @@ Other track (needs <track_dir>/<track_name>_waypoints.csv and
 _initial_safe_set.csv -- see pure_pursuit.launch.py to generate the latter):
     ros2 launch lmpc_ros2 lmpc.launch.py track_dir:=/path/to/dir track_name:=my_track
 
-Real car (see README.md's real-car section before running this):
+Real car (see README.md's real-car section before running this). pose_source
+defaults to "odom" (trust pose_topic's Odometry pose+twist directly, the sim
+behavior) -- set it to "pf" to instead take x/y/yaw from a PoseStamped
+particle-filter topic (pf_pose_topic) with omega/beta reconstructed by
+finite-differencing consecutive PF samples (pose_topic is then only used for
+its |v|). See lmpc_node.cpp's reconstruct_from_pf() -- ported from
+f1tenth_ws's DA_MCTS_sim/node.py::_odom_cb, since real wheel-encoder
+odometry alone can't see lateral slip (beta) at all:
     ros2 launch lmpc_ros2 lmpc.launch.py \\
-        pose_topic:=/pf/pose/odom map_topic:=/map
+        pose_source:=pf pose_topic:=/odom pf_pose_topic:=/tracked_pose \\
+        map_topic:=/map
 
 Either way, something must already be publishing map_topic (transient-local
 OccupancyGrid) before the controller can initialize -- f1tenth_gym_ros needs
@@ -45,6 +53,9 @@ def launch_setup(context, *args, **kwargs):
 
     overrides = {
         "pose_topic": LaunchConfiguration("pose_topic"),
+        "pose_source": LaunchConfiguration("pose_source"),
+        "pf_pose_topic": LaunchConfiguration("pf_pose_topic"),
+        "slip_angle_estimation": LaunchConfiguration("slip_angle_estimation"),
         "drive_topic": LaunchConfiguration("drive_topic"),
         "map_topic": LaunchConfiguration("map_topic"),
         "waypoint_csv": os.path.join(track_dir, f"{track_name}_waypoints.csv"),
@@ -75,7 +86,33 @@ def launch_setup(context, *args, **kwargs):
 def generate_launch_description():
     pose_topic_arg = DeclareLaunchArgument(
         "pose_topic", default_value="/ego_racecar/odom",
-        description="Odometry topic to control from (real car: e.g. /pf/pose/odom)",
+        description="Odometry topic. pose_source=odom (default): supplies "
+                     "pose AND twist directly. pose_source=pf: only its |v| "
+                     "is used (e.g. real car's /odom from vesc_to_odom) -- "
+                     "x/y/yaw/omega/beta come from pf_pose_topic instead.",
+    )
+    pose_source_arg = DeclareLaunchArgument(
+        "pose_source", default_value="odom",
+        description="'odom' (default, sim-compatible): trust pose_topic's "
+                     "Odometry pose+twist directly. 'pf' (real car): x/y/yaw "
+                     "from pf_pose_topic (PoseStamped), omega/beta "
+                     "reconstructed by finite-differencing consecutive PF "
+                     "samples -- see lmpc_node.cpp's reconstruct_from_pf().",
+    )
+    pf_pose_topic_arg = DeclareLaunchArgument(
+        "pf_pose_topic", default_value="/tracked_pose",
+        description="PoseStamped particle-filter output (e.g. syn_pf_cpp's "
+                     "/tracked_pose). Only read when pose_source:=pf.",
+    )
+    slip_angle_estimation_arg = DeclareLaunchArgument(
+        "slip_angle_estimation", default_value="false",
+        description="pose_source=pf only. false (default): pin beta (slip "
+                     "angle) to exactly 0 unconditionally. true: estimate it "
+                     "by finite-differencing PF pose samples, projected one "
+                     "step forward through the controller's own dynamics "
+                     "model (see reconstruct_from_pf/predict_beta in "
+                     "lmpc_node.cpp) -- inherently noisy, hence opt-in. "
+                     "omega is unaffected either way.",
     )
     drive_topic_arg = DeclareLaunchArgument(
         "drive_topic", default_value="/drive",
@@ -121,6 +158,9 @@ def generate_launch_description():
 
     return LaunchDescription([
         pose_topic_arg,
+        pose_source_arg,
+        pf_pose_topic_arg,
+        slip_angle_estimation_arg,
         drive_topic_arg,
         map_topic_arg,
         track_dir_arg,
