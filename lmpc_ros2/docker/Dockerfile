@@ -62,6 +62,18 @@ RUN cp /ws/src/LearningMPC/lmpc_ros2/data/gold_conference_room/gold_conference_r
       -e "s/^\(\s*stheta:\s*\).*/\11.570796/" \
       /ws/src/f1tenth_gym_ros/config/sim.yaml
 
+# gym_bridge_launch.py's rviz2 crashes seconds after startup: its Map
+# display uses the rviz/glsl120/indexed_8bit_image shader, which fails to
+# link ("active samplers with a different type refer to the same texture
+# image unit") on modern GL linkers -- reproduced identically under both
+# GPU passthrough and forced software rendering (LIBGL_ALWAYS_SOFTWARE=1),
+# so it's an rviz2/Ogre1 shader bug, not a driver issue. Disabling the Map
+# display sidesteps it; everything else (grid, robot model, laser scan,
+# paths) still renders. /map is still published by map_server and consumed
+# normally by lmpc_node -- this only turns off rviz's own visualization of it.
+RUN sed -i "/Class: rviz_default_plugins\/Map/,/^    - /{s/Enabled: true/Enabled: false/}" \
+      /ws/src/f1tenth_gym_ros/launch/gym_bridge.rviz
+
 # Eigen 3.4.0 / OSQP v0.6.3 / osqp-eigen v0.8.1 into src_gym/deps, same
 # versions and steps as src_gym/build.sh's dependency stage -- lmpc_ros2's
 # CMakeLists.txt looks for them there via LMPC_DEPS_DIR. Skips build.sh's
