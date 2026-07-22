@@ -260,11 +260,22 @@ void SynPFComponent::update_filter()
 
   if (!have_last_pose_) {
     have_last_pose_ = true;
+    last_pose_ = curr_pose;
   } else {
     auto t0 = std::chrono::steady_clock::now();
     resample();
     auto t1 = std::chrono::steady_clock::now();
-    motion_model_tum(curr_pose, last_pose_, last_odom_vx_);
+    // Only advance last_pose_ when motion_model_tum actually consumed the
+    // delta (d_trans_raw >= its 1cm threshold) -- update_filter() runs on
+    // every /scan message (~250Hz in sim), so at typical driving speeds the
+    // inter-scan displacement is routinely sub-centimeter. Advancing
+    // last_pose_ unconditionally every call (as before) meant the reference
+    // point chased curr_pose every ~4ms and the accumulated displacement
+    // never had a chance to cross the threshold -- particles never moved,
+    // freezing the published pose the instant the car started driving.
+    // Leaving last_pose_ untouched on a skip lets the sub-threshold gaps
+    // accumulate until they're large enough for the motion model to use.
+    const bool moved = motion_model_tum(curr_pose, last_pose_, last_odom_vx_);
     auto t2 = std::chrono::steady_clock::now();
     if (sensor_ready_.load() && !downsampled_ranges_.empty()) {
       sensor_update(weights_);
@@ -286,8 +297,10 @@ void SynPFComponent::update_filter()
     push_stage(t_motion_,      D(t2 - t1).count());
     push_stage(t_sensor_,      D(t3 - t2).count());
     push_stage(t_mcl_post_,    D(t4 - t3).count());
+    if (moved) {
+      last_pose_ = curr_pose;
+    }
   }
-  last_pose_ = curr_pose;
 
   auto t_pe0 = std::chrono::steady_clock::now();
   Eigen::Vector3d mean = weighted_mean_pose();
@@ -355,7 +368,7 @@ void SynPFComponent::initialize_particles_pose(double x, double y, double theta)
   particles_initialized_ = true;
 }
 
-void SynPFComponent::motion_model_tum(
+bool SynPFComponent::motion_model_tum(
   const Eigen::Vector3d & curr, const Eigen::Vector3d & last, double odom_vx)
 {
   const double dx = curr[0] - last[0];
@@ -363,7 +376,7 @@ void SynPFComponent::motion_model_tum(
   double dtheta  = angle_diff(curr[2], last[2]);
   const double d_trans_raw = std::hypot(dx, dy);
 
-  if (d_trans_raw < 0.01) return;
+  if (d_trans_raw < 0.01) return false;
 
   double d_rot1 = angle_diff(std::atan2(dy, dx), last[2]);
 
@@ -404,6 +417,7 @@ void SynPFComponent::motion_model_tum(
     particles_(i, 1) += dtr * std::sin(eff_hdg);
     particles_(i, 2) = wrap_atan2(particles_(i, 2) + dr1 + dr2);
   }
+  return true;
 }
 
 Eigen::Vector3d SynPFComponent::weighted_mean_pose() const

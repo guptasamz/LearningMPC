@@ -164,7 +164,7 @@ private:
   void initialize_global();
   void publish_particles_viz(const rclcpp::Time & stamp);
   void broadcast_map_to_odom(const Eigen::Vector3d & mean, const rclcpp::Time & stamp);
-  void motion_model_tum(
+  bool motion_model_tum(
     const Eigen::Vector3d & curr, const Eigen::Vector3d & last, double odom_vx);
   void try_init_sensor();
   void build_omap_from_msg(const nav_msgs::msg::OccupancyGrid & msg);
