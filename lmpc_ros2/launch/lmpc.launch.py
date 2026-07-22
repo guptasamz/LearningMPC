@@ -55,7 +55,6 @@ def launch_setup(context, *args, **kwargs):
         "pose_topic": LaunchConfiguration("pose_topic"),
         "pose_source": LaunchConfiguration("pose_source"),
         "pf_pose_topic": LaunchConfiguration("pf_pose_topic"),
-        "slip_angle_estimation": LaunchConfiguration("slip_angle_estimation"),
         "drive_topic": LaunchConfiguration("drive_topic"),
         "map_topic": LaunchConfiguration("map_topic"),
         "waypoint_csv": os.path.join(track_dir, f"{track_name}_waypoints.csv"),
@@ -71,6 +70,12 @@ def launch_setup(context, *args, **kwargs):
     half_width_max_override = LaunchConfiguration("track_half_width_max").perform(context)
     if half_width_max_override:
         overrides["track_half_width_max"] = float(half_width_max_override)
+    # Empty (default) leaves config/lmpc_params.yaml's slip_angle_estimation
+    # value in effect -- that's the actual config, this is just a one-off
+    # override knob, same pattern as track_half_width_max above.
+    slip_angle_estimation_override = LaunchConfiguration("slip_angle_estimation").perform(context)
+    if slip_angle_estimation_override:
+        overrides["slip_angle_estimation"] = slip_angle_estimation_override.lower() == "true"
 
     lmpc_node = Node(
         package="lmpc_ros2",
@@ -105,10 +110,12 @@ def generate_launch_description():
                      "/tracked_pose). Only read when pose_source:=pf.",
     )
     slip_angle_estimation_arg = DeclareLaunchArgument(
-        "slip_angle_estimation", default_value="false",
-        description="pose_source=pf only. false (default): pin beta (slip "
-                     "angle) to exactly 0 unconditionally. true: estimate it "
-                     "by finite-differencing PF pose samples, projected one "
+        "slip_angle_estimation", default_value="",
+        description="pose_source=pf only. Empty (default) uses "
+                     "config/lmpc_params.yaml's value (false -- beta pinned "
+                     "to exactly 0 unconditionally). Set true/false to "
+                     "override for a one-off run: true estimates beta by "
+                     "finite-differencing PF pose samples, projected one "
                      "step forward through the controller's own dynamics "
                      "model (see reconstruct_from_pf/predict_beta in "
                      "lmpc_node.cpp) -- inherently noisy, hence opt-in. "

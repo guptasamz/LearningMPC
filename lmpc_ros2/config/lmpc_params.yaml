@@ -61,6 +61,16 @@ lmpc_node:
     # 0 = original known-dynamics model; 1 = kinematic nominal + online
     # residual regression (online_training/) -- see README.md.
     dynamics_model: 0.0
+    # pose_source=pf only (see README.md Section 1): whether to estimate beta
+    # (slip angle) at all. The estimate (finite-diff over PF pose samples,
+    # then projected one step forward through this controller's own dynamics
+    # model -- see lmpc_node.cpp's reconstruct_from_pf/predict_beta) is
+    # noisier than the omega estimate next to it, since it differentiates a
+    # discretely-sampled position signal rather than reading a rate directly.
+    # false (default): pin beta to exactly 0 unconditionally instead. omega
+    # is unaffected either way. Override per-run with lmpc.launch.py's
+    # slip_angle_estimation:=<true|false>.
+    slip_angle_estimation: false
 
 pure_pursuit_node:
   ros__parameters:
